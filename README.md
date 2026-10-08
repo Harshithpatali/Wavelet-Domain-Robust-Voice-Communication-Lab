@@ -331,75 +331,44 @@ This repository is intentionally limited to an academic simulation of:
 - Quantitative audio-quality evaluation.
 
 It does not implement military radio protocols, tactical communication systems, frequency hopping, anti-interception procedures, or operational deployment.
+## Current WAV sender/receiver workflow
 
-## Key-first transmission workflow
-
-Email delivery is intentionally **deferred** for now. The current app focuses on the core transmitter/receiver experiment and uses a portable `.wav` package.
+Email/SMTP is intentionally deferred. The current app uses a single portable WAV transmission.
 
 ### Sender
 
-Choose:
+1. Choose the secret key.
+2. Click Set & Lock Key.
+3. Only then upload the original voice.
+4. The app performs DWT, thresholding, and keyed coefficient scrambling.
+5. Download voice_transmission.wav.
+6. Send the WAV and the same key separately.
 
-    Communication Mode → Transmit & Send
+The transmission WAV is stereo:
 
-Then:
+- Channel 1: audible scrambled voice for pre-key listening.
+- Channel 2: scrambled wavelet coefficient payload plus non-secret reconstruction metadata.
 
-1. Choose the secret **transmitter key**.
-2. Click **Set & Lock Key**.
-3. Only after the key is locked does audio upload become available.
-4. Upload the voice recording.
-5. The locked key drives the deterministic coefficient permutation.
-6. Download the generated `.wav` transmission WAV.
-7. Share the `.wav` package and the same key with the intended receiver through separate channels.
-
-The transmission WAV contains:
-
-- scrambled wavelet coefficients;
-- wavelet name;
-- DWT level;
-- sample rate;
-- original signal length;
-- threshold metadata;
-- a coefficient-payload SHA-256 checksum.
-
-The **secret key is never stored in the WAV**.
+The secret key is never stored in the WAV.
 
 ### Receiver
 
-Choose:
+1. Select Receive Shared Transmission.
+2. Upload voice_transmission.wav — WAV only.
+3. Listen to the scrambled transmission.
+4. Enter the key supplied separately by the sender.
+5. Click Recover original voice.
+6. The app reverses the keyed permutation and performs IDWT.
+7. Listen to or download recovered_voice.wav.
 
-    Communication Mode → Receive Shared Transmission
+The receiver does not need WVT, ZIP, or SMTP/email configuration.
 
-Then:
+### Important receiver setting
 
-1. Upload the `.wav` transmission.
-2. Enter the key supplied separately by the sender.
-3. The app derives the same deterministic permutation locally.
-4. The receiver reverses the coefficient ordering and applies IDWT.
-5. Listen to or download the recovered WAV.
-
-The receiver UI deliberately does not claim that an entered integer is cryptographically authenticated. A correct key is verified experimentally by the recovered audio and similarity metrics.
-
-### Why a checksum is included
-
-The current WAV transmission uses a non-secret header in its second audio channel to describe the coefficient payload. The secret key is never embedded in that header. Production systems should add authenticated integrity protection.
-
-## Scope
-
-This repository is intentionally limited to an academic simulation of:
-
-- Digital signal processing.
-- Wavelet-domain representation.
-- Reversible coefficient scrambling.
-- Simulated communication-channel degradation.
-- Receiver-side reconstruction.
-- Quantitative audio-quality evaluation.
-
-It does not implement military radio protocols, tactical communication systems, frequency hopping, anti-interception procedures, or operational deployment.
+The receiver must select the same wavelet and DWT level used by the sender. These settings are currently selected in the Streamlit sidebar and are not secret.
 
 ## Security note
 
-The keyed coefficient permutation is **reversible signal obfuscation, not cryptographic encryption**. It should not be described as military-grade security or as a replacement for cryptography.
+The keyed coefficient permutation is reversible signal obfuscation, not cryptographic encryption. It should not be described as military-grade security or as a replacement for cryptography.
 
 For real confidentiality, integrity, and authentication, use a standard reviewed authenticated-encryption construction.
-
