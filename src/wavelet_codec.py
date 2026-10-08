@@ -184,7 +184,7 @@ def load_transmission_wav(data: bytes, wavelet: str | None = None, level: int | 
 
     if audio.ndim != 2 or audio.shape[1] < 2:
         raise ValueError(
-            "This is not a receiver-compatible transmission WAV. "
+            "This is not a receiver-compatible stereo WAV transmission. "
             "Please use the sender's Download transmission WAV button."
         )
 
