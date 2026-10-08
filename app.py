@@ -36,6 +36,17 @@ st.set_page_config(
 )
 
 # =====================================================================
+# SESSION STATE DEFAULTS
+# =====================================================================
+# Streamlit reruns the script for every interaction, so all state used
+# by widgets must exist before the sidebar reads it.
+if "sender_key_locked" not in st.session_state:
+    st.session_state.sender_key_locked = False
+if "locked_transmitter_key" not in st.session_state:
+    st.session_state.locked_transmitter_key = None
+
+
+# =====================================================================
 # THEME
 # =====================================================================
 st.markdown(
