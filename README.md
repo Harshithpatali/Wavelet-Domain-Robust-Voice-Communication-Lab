@@ -20,7 +20,7 @@
 [Quick Start](#-quick-start) ·
 [How It Works](#-how-it-works) ·
 [Usage](#-usage) ·
-[Package Format](#-the-wvt-package-format) ·
+[Transmission WAV](#-the-transmission-wav-format) ·
 [Metrics](#-verification-dashboard) ·
 [Security](#-security-limitations) ·
 [FAQ](#-faq)
@@ -75,12 +75,12 @@ The result is a hands-on lab for exploring **wavelet representation, reversible 
 |---|---|---|
 | 🎛️ | **Full DWT control** | Haar, db2–db8, sym4, coif1 · decomposition levels 1–6 |
 | 🔑 | **Key-first workflow** | Key is locked *before* audio upload and never stored in the package |
-| 📦 | **Portable `.wvt` package** | Self-contained ZIP: scrambled coefficients + verifiable metadata (SHA-256) |
+| 🎵 | **Portable stereo WAV** | Receiver-compatible WAV: audible scrambled voice + non-secret coefficient payload |
 | 📡 | **Channel simulation** | Adjustable AWGN SNR and packet-loss probability, reproducible via seeds |
 | 🛰️ | **Two-mode UI** | *Transmit & Send* and *Receive Shared Transmission* in one app |
 | 📊 | **Verification dashboard** | Reorder rate, correlation metrics, correct- vs. wrong-key comparison |
 | 📈 | **Visual analysis** | Waveform stages, coefficient order, permutation map, magnitude distribution |
-| 🧾 | **Exports** | `.wvt` package, recovered WAV, summary CSV |
+| 🧾 | **Exports** | Transmission WAV, recovered WAV, summary CSV |
 | 🧪 | **Test suite** | Pytest coverage for codec round-trip, channel, and permutation reversibility |
 | 💻 | **CLI + Web** | Headless experiments or interactive Streamlit |
 | 🎧 | **Format support** | WAV out of the box; M4A / MP3 / AAC via `ffmpeg` |
@@ -191,18 +191,21 @@ The `.wvt` package carries all non-secret configuration, so only the key has to 
 2.  Click  🔒 Set & Lock Key
 3.  Only then upload the voice recording
 4.  The app performs:  DWT → threshold → keyed permutation
-5.  Download  voice_transmission.wvt
-6.  Send the .wvt package and the key through SEPARATE channels
+5.  Download  voice_transmission.wav
+6.  Send the WAV and the key through SEPARATE channels
 ```
+
+> **Important:** use the **Download transmission WAV** button. The analysis preview of the scrambled waveform is not a receiver package because it does not contain the coefficient payload.
 
 ### 🔵 Receiver (web app)
 
 ```text
 1.  Choose  Receive Shared Transmission
-2.  Upload  voice_transmission.wvt
-3.  Enter the key provided separately by the sender
-4.  The app reverses the permutation and performs IDWT
-5.  Listen to / download  recovered_voice.wav
+2.  Upload  voice_transmission.wav
+3.  Listen to the scrambled voice BEFORE entering the key
+4.  Enter the key provided separately by the sender
+5.  Click  🔑 Recover original voice
+6.  Listen to / download  recovered_voice.wav
 ```
 
 ### ⌨️ Command-line experiment
@@ -253,24 +256,28 @@ print(metrics.snr(signal, recovered))
 
 ---
 
-## 📦 The `.wvt` Package Format
+## 🎵 The transmission WAV format
 
-A `.wvt` file is a self-contained **ZIP archive** carrying everything the receiver needs **except the key**.
+The transmitter exports a **stereo WAV** named `voice_transmission.wav`.
 
-| Contents | Description |
+| Channel | Contents |
 |---|---|
-| **Scrambled coefficients** | `float64` payload, already permuted |
-| **Wavelet name** | e.g. `db4` |
-| **DWT level** | e.g. `4` |
-| **Sample rate** | Hz |
-| **Original length** | Samples, needed to trim IDWT padding |
-| **Threshold** | Value used at transmit time |
-| **SHA-256 checksum** | Integrity check of the coefficient payload |
-| **🚫 Secret key** | **Never included** |
+| **Channel 1** | Audible scrambled voice reconstruction for the receiver/interceptor listening step |
+| **Channel 2** | Five non-secret header values followed by the scrambled wavelet coefficients at a very small carrier gain |
 
-> The checksum detects accidental corruption of the payload. It is **not** a signature or MAC: anyone can recompute it after tampering. See [Security Limitations](#-security-limitations).
+The header stores:
 
----
+- transmission magic/version marker
+- original sample count
+- flattened coefficient count
+- coefficient scale
+- carrier gain
+
+The **secret key is never stored in the WAV**.
+
+The receiver must select the same wavelet and DWT level used by the sender because those parameters determine the coefficient layout. The receiver validates the WAV structure and header before allowing keyed recovery.
+
+> A mono file such as the separate `transmitted_scrambled.wav` analysis preview cannot be recovered. It contains only the audible preview, not the coefficient payload.
 
 ## 📊 Verification Dashboard
 
@@ -384,6 +391,7 @@ Wavelet-Domain-Robust-Voice-Communication-Lab/
 │   ├── audio.py               # Loading, decoding, resampling
 │   ├── channel.py             # AWGN + packet loss
 │   ├── metrics.py             # SNR, MSE, correlation
+│   ├── transmission.py        # Portable stereo WAV transmission format
 │   └── wavelet_codec.py       # DWT, thresholding, permutation, IDWT
 └── tests/
     ├── test_audio_formats.py
@@ -398,6 +406,7 @@ Wavelet-Domain-Robust-Voice-Communication-Lab/
 | `wavelet_codec.py` | DWT/IDWT, thresholding, keyed permutation and its inverse |
 | `channel.py` | AWGN at a target SNR, packet/sample loss, seeded for reproducibility |
 | `metrics.py` | SNR, MSE, correlation |
+| `transmission.py` | Creates/validates the receiver-compatible stereo WAV | 
 | `app.py` | Two-mode Streamlit interface and verification dashboard |
 | `run_experiment.py` | End-to-end CLI pipeline |
 
@@ -419,6 +428,8 @@ The suite verifies:
 - ✅ Channel behavior (noise level and packet loss)
 - ✅ Audio format loading
 - ✅ End-to-end experiment run
+- ✅ Portable stereo transmission WAV round-trip
+- ✅ Receiver rejection of mono/non-transmission WAV files
 
 ---
 
@@ -427,9 +438,11 @@ The suite verifies:
 | Problem | Likely cause | Fix |
 |---|---|---|
 | M4A / MP3 / AAC upload fails | `ffmpeg` missing | Install `ffmpeg` and `libsndfile1` (see [Quick Start](#-quick-start)) |
-| Recovered audio is noise | Wrong key, or mismatched wavelet / level / threshold | Verify the key and use the `.wvt` package's own metadata |
-| Recovery is poor even with the right key | Channel too harsh | Raise SNR or lower packet-loss; try a different wavelet or level |
-| Checksum error on the receiver | `.wvt` corrupted in transit | Re-send the package |
+| Receiver says the WAV must be stereo | The uploaded file is the mono scrambled-audio preview | Download **voice_transmission.wav** using the transmitter's **Download transmission WAV** button |
+| Receiver says the WAV is not a Wavelet Voice Lab transmission | A different stereo WAV was uploaded | Use the WAV exported by this app, not a generic stereo recording |
+| Receiver reports a wavelet/DWT mismatch | Receiver settings differ from the sender | Select the same wavelet and DWT level used by the sender |
+| Recovered audio is noise | Wrong key or mismatched codec configuration | Verify the separately shared key and receiver wavelet/level |
+| Recovery is poor even with the right key | Channel too harsh in the experiment | Raise SNR or lower packet-loss; try a different wavelet or level |
 | `streamlit: command not found` | Virtual environment not activated | Activate `.venv` and reinstall requirements |
 | PowerShell blocks activation script | Execution policy | `Set-ExecutionPolicy -Scope Process RemoteSigned` |
 | Results differ between runs | Different channel seed | Fix the seed for reproducible experiments |
@@ -441,11 +454,11 @@ The suite verifies:
 **Is this secure?**
 No. It's a teaching tool for reversible obfuscation. See [Security Limitations](#-security-limitations).
 
-**Why send the key and the `.wvt` separately?**
-If both travel together, the obfuscation provides nothing at all. Keeping them on separate channels mirrors good key-handling practice, even though this scheme isn't cryptographically strong.
+**Why send the key and the WAV separately?**
+If both travel together, the obfuscation provides nothing at all. The WAV contains the scrambled signal and non-secret recovery metadata, while the key is delivered separately.
 
 **Why does the receiver need the same wavelet and level?**
-The inverse transform assumes the same filter bank and band layout used at analysis time. The `.wvt` metadata handles this for you.
+The inverse transform assumes the same filter bank and band layout used at analysis time. The WAV carries the original length and coefficient count, while the receiver currently selects the same wavelet and DWT level used by the sender.
 
 **Why is the scrambled audio so loud and noisy?**
 After permutation, energy that was concentrated in low-frequency bands is spread across the whole spectrum, so the intermediate signal sounds like broadband noise.
