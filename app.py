@@ -47,6 +47,12 @@ if "sender_key_locked" not in st.session_state:
 if "locked_transmitter_key" not in st.session_state:
     st.session_state.locked_transmitter_key = None
 
+# Shareable receiver entry point. The link opens this app directly in receiver mode.
+APP_URL = "https://wavelet-domain-robust-voice-communication-lab.streamlit.app/"
+receiver_query_mode = str(st.query_params.get("mode", "")).lower()
+receiver_link = f"{APP_URL}?mode=receive"
+initial_mode_index = 1 if receiver_query_mode in {"receive", "receiver"} else 0
+
 
 # =====================================================================
 # THEME
@@ -737,7 +743,7 @@ with st.sidebar:
     app_mode = st.radio(
         "Mode",
         ["Transmit & Send", "Receive Shared Transmission"],
-        index=0,
+        index=initial_mode_index,
         label_visibility="collapsed",
     )
 
@@ -804,6 +810,11 @@ if app_mode == "Receive Shared Transmission":
     pipeline_strip()
 
     st.markdown("### 🛰️ Ground Station · Receive")
+    if receiver_query_mode in {"receive", "receiver"}:
+        st.success(
+            "Receiver link opened successfully. Upload the sender's **voice_transmission.wav**, "
+            "then enter the shared key to recover the original voice."
+        )
     st.caption(
         "Upload the WAV transmission, listen to the scrambled voice first, "
         "then enter the same key selected by the sender."
@@ -1071,6 +1082,39 @@ with tab_pipe:
         "voice_transmission.wav",
         "audio/wav",
         key="dl_transmission_wav",
+    )
+
+    st.markdown("#### 🔗 Receiver access")
+    st.caption(
+        "Send the **voice_transmission.wav** together with this receiver link. "
+        "The link opens the app directly in Receive Shared Transmission mode. "
+        "The receiver still selects the WAV file on their device and then enters the shared key."
+    )
+    st.markdown(
+        f"**Receiver link:** [Open Wavelet Voice Receiver]({receiver_link})"
+    )
+
+    receiver_launcher_html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Wavelet Voice Receiver</title>
+  <meta http-equiv="refresh" content="0;url={receiver_link}">
+</head>
+<body>
+  <p>Opening the Wavelet Voice Receiver...</p>
+  <p><a href="{receiver_link}">Click here if the app does not open automatically.</a></p>
+</body>
+</html>
+"""
+    st.download_button(
+        "🚀 Download receiver launcher",
+        receiver_launcher_html.encode("utf-8"),
+        "Open_Wavelet_Receiver.html",
+        "text/html",
+        key="dl_receiver_launcher",
+        on_click="ignore",
     )
 
 
