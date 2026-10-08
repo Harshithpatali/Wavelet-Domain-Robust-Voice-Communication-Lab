@@ -124,6 +124,7 @@ html, body, .stApp{
 }
 [data-testid="stSidebar"] div[role="radiogroup"] label p{
   font-size:.86rem !important; font-weight:600 !important;
+  color: var(--text) !important;
 }
 
 /* ---------- hero ---------- */
@@ -232,7 +233,7 @@ div[data-testid="stMetricLabel"] p{
 }
 div[data-testid="stMetricValue"]{
   font-family:'JetBrains Mono',monospace;
-  color:var(--text); font-size:1.35rem;
+  color:var(--text) !important; font-size:1.35rem;
 }
 
 /* ---------- buttons ---------- */
@@ -241,21 +242,21 @@ div[data-testid="stMetricValue"]{
   border-radius:11px;
   border:1px solid var(--border);
   background:rgba(34,211,238,.07);
-  color:var(--text);
+  color:var(--text) !important;
   font-weight:600; font-size:.83rem;
   transition:all .15s ease;
 }
 .stButton > button:hover, .stDownloadButton > button:hover{
   border-color:rgba(34,211,238,.65);
   background:rgba(34,211,238,.15);
-  color:#ffffff;
+  color:#ffffff !important;
 }
 .stButton > button[kind="primary"]{
   background:linear-gradient(135deg,#22d3ee,#6366f1);
-  border:none; color:#04121a; font-weight:700;
+  border:none; color:#04121a !important; font-weight:700;
 }
 .stButton > button[kind="primary"]:hover{
-  filter:brightness(1.12); color:#04121a;
+  filter:brightness(1.12); color:#04121a !important;
 }
 
 /* ---------- audio ---------- */
@@ -272,11 +273,137 @@ div[data-baseweb="tab-list"]{
 button[data-baseweb="tab"]{
   border-radius:10px 10px 0 0;
   font-family:'JetBrains Mono',monospace; font-size:.74rem; letter-spacing:.06em;
-  color:var(--muted); padding:.5rem .9rem;
+  color:var(--muted) !important; padding:.5rem .9rem;
 }
 button[data-baseweb="tab"][aria-selected="true"]{
-  color:var(--cyan);
+  color:var(--cyan) !important;
   background:rgba(34,211,238,.07);
+}
+button[data-baseweb="tab"] p {
+  color: inherit !important;
+  font-size: .74rem !important;
+  font-weight: 600 !important;
+}
+
+/* ---------- inputs & selects (fix white blocks) ---------- */
+div[data-baseweb="input"], div[data-baseweb="select"] > div {
+  background-color: var(--surface-2) !important;
+  border-color: var(--border) !important;
+  border-radius: 10px !important;
+}
+div[data-baseweb="input"] input,
+div[data-baseweb="select"] div,
+div[data-baseweb="select"] span {
+  color: var(--text) !important;
+  background-color: transparent !important;
+}
+div[data-baseweb="input"] input::placeholder {
+  color: var(--muted) !important;
+}
+ul[data-baseweb="menu"] {
+  background-color: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+}
+ul[data-baseweb="menu"] li {
+  color: var(--text) !important;
+}
+ul[data-baseweb="menu"] li:hover {
+  background-color: rgba(34,211,238,.12) !important;
+}
+
+/* ---------- number input steppers ---------- */
+button[data-testid="stNumberInputStepUp"],
+button[data-testid="stNumberInputStepDown"] {
+  background-color: var(--surface-2) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+/* ---------- file uploader (fix white block) ---------- */
+[data-testid="stFileUploader"] {
+  background-color: transparent !important;
+}
+[data-testid="stFileUploader"] section,
+[data-testid="stFileUploaderDropzone"] {
+  background-color: var(--surface) !important;
+  border: 1px dashed var(--border) !important;
+  border-radius: 14px !important;
+  color: var(--text) !important;
+}
+[data-testid="stFileUploaderDropzone"]:hover,
+[data-testid="stFileUploader"] section:hover {
+  border-color: var(--cyan) !important;
+  background-color: rgba(34,211,238,.05) !important;
+}
+[data-testid="stFileUploaderDropzone"] span,
+[data-testid="stFileUploaderDropzone"] small,
+[data-testid="stFileUploaderDropzone"] div,
+[data-testid="stFileUploader"] section span,
+[data-testid="stFileUploader"] section small,
+[data-testid="stFileUploader"] section div {
+  color: var(--muted) !important;
+}
+[data-testid="stFileUploaderDropzone"] button,
+[data-testid="stFileUploader"] section button {
+  background-color: var(--surface-2) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+}
+[data-testid="stFileUploaderDropzone"] button:hover {
+  border-color: var(--cyan) !important;
+  color: #ffffff !important;
+}
+
+/* ---------- alerts / info / success / warning ---------- */
+div[data-testid="stAlert"] {
+  background-color: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  border-radius: 14px !important;
+  border-left-width: 4px !important;
+}
+div[data-testid="stAlert"] p,
+div[data-testid="stAlert"] span,
+div[data-testid="stAlert"] div,
+div[data-testid="stAlert"] a {
+  color: var(--text) !important;
+}
+/* Type-specific accent colors for the left border */
+div[data-testid="stAlert"][data-baseweb="notification"] {
+  border-left-color: var(--cyan) !important;
+}
+
+/* ---------- dataframe (fix white table) ---------- */
+div[data-testid="stDataFrame"] {
+  background-color: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 14px !important;
+}
+div[data-testid="stDataFrame"] * {
+  color: var(--text) !important;
+}
+div[data-testid="stDataFrame"] th {
+  background-color: var(--surface-2) !important;
+  color: var(--muted) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+div[data-testid="stDataFrame"] td {
+  background-color: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+/* ---------- slider ---------- */
+div[data-testid="stSlider"] {
+  color: var(--text) !important;
+}
+div[data-testid="stSlider"] div[role="slider"] {
+  background-color: var(--cyan) !important;
+}
+div[data-testid="stSlider"] [data-baseweb="slider"] div[data-testid="stSliderTickBar"],
+div[data-testid="stSlider"] [data-baseweb="slider"] div[data-testid="stSliderTickBarMin"],
+div[data-testid="stSlider"] [data-baseweb="slider"] div[data-testid="stSliderTickBarMax"] {
+  color: var(--muted) !important;
 }
 
 /* ---------- expander ---------- */
@@ -285,12 +412,26 @@ div[data-testid="stExpander"]{
   border-radius:14px !important;
   background:rgba(255,255,255,.02);
 }
+div[data-testid="stExpander"] summary {
+  color: var(--text) !important;
+  font-weight: 600 !important;
+}
+div[data-testid="stExpander"] summary p {
+  color: var(--text) !important;
+}
 
-/* ---------- dataframe ---------- */
-div[data-testid="stDataFrame"]{ border-radius:14px; overflow:hidden; border:1px solid var(--border); }
-
-/* ---------- alerts ---------- */
-div[data-testid="stAlert"]{ border-radius:14px; border:1px solid var(--border); }
+/* ---------- general text elements ---------- */
+h1, h2, h3, h4, h5, h6 { color: var(--text) !important; }
+.stMarkdown p, .stMarkdown li { color: var(--text); }
+[data-testid="stCaptionContainer"] { color: var(--muted) !important; }
+[data-testid="stCaptionContainer"] p { color: var(--muted) !important; }
+label, .stRadio label, .stSelectbox label, .stSlider label, .stNumberInput label {
+  color: var(--text) !important;
+}
+[data-testid="stWidgetLabel"] p {
+  color: var(--text) !important;
+  font-size: .82rem !important;
+}
 
 /* ---------- footer ---------- */
 .foot{
@@ -334,6 +475,7 @@ ACCENT = {
     "ch": "#fbbf24",
     "rx": "#34d399",
     "bad": "#fb7185",
+    "muted": "#8ea3c0",
 }
 
 
@@ -507,7 +649,7 @@ def hero(mode: str, key_locked: bool, key_value, wavelet: str, level: int, snr: 
     )
 
 
-def pipeline_strip(stage: int = 0):
+def pipeline_strip():
     nodes = [
         ("① SOURCE", "tx"),
         ("② DWT", "tx"),
@@ -674,7 +816,7 @@ if app_mode == "Receive Shared Transmission":
 
     with c_key:
         with st.container(border=True):
-            stage_head("02", "Receiver Key", "OUT-OF-BAND SECRET", ACCENT["vi"] if False else ACCENT["key"])
+            stage_head("02", "Receiver Key", "OUT-OF-BAND SECRET", ACCENT["key"])
             receiver_key_input = st.number_input(
                 "Receiver key",
                 min_value=0,
@@ -982,7 +1124,7 @@ with tab_verify:
     )
     ax_perm.plot(
         np.arange(show_n), np.arange(show_n),
-        linestyle="--", color=ACCENT["muted"] if "muted" in ACCENT else "#8ea3c0",
+        linestyle="--", color=ACCENT["muted"],
         linewidth=1, label="No scrambling reference",
     )
     ax_perm.set_title("Permutation map · transmitted position → source coefficient index")
