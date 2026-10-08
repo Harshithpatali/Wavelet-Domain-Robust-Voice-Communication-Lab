@@ -52,3 +52,14 @@ def test_same_key_recreates_same_permutation():
     scrambled_b, perm_b = scramble(p, key=12345)
     assert np.array_equal(perm_a, perm_b)
     assert np.array_equal(scrambled_a.coeffs[0], scrambled_b.coeffs[0])
+
+
+def test_different_key_does_not_restore_coefficients():
+    x = synthetic_voice_like(duration=1.0)
+    p = decompose(x, "db4", 4)
+    scrambled, correct_permutation = scramble(p, key=2026)
+    wrong_permutation = scramble(p, key=2027)[1]
+    wrong = descramble(scrambled, wrong_permutation)
+    assert not np.array_equal(wrong.coeffs[0], p.coeffs[0])
+    restored = descramble(scrambled, correct_permutation)
+    assert np.array_equal(restored.coeffs[0], p.coeffs[0])
