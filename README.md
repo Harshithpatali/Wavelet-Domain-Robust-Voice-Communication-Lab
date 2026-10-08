@@ -48,12 +48,12 @@ The UI exposes the complete communication path:
 3. **Received Scrambled Audio** — the scrambled representation after simulated channel noise/loss.
 4. **Receiver Recovered Audio** — coefficient descrambling followed by IDWT.
 
-The sidebar contains the shared transmitter/receiver configuration:
+The sidebar contains the transmission configuration:
 
 - Wavelet: Haar, Daubechies, Symlet, or Coiflet options.
 - DWT decomposition level.
 - Coefficient threshold.
-- Shared scrambling key.
+- Transmitter scrambling key (locked before upload).
 - Channel SNR.
 - Packet/sample loss probability.
 - Channel random seed.
@@ -350,30 +350,6 @@ The receiver UI deliberately does not claim that an entered integer is cryptogra
 ### Why a checksum is included
 
 The SHA-256 value in the package detects accidental or ordinary payload corruption before reconstruction. It is **not an authentication mechanism**: anyone who can modify both the payload and metadata could replace the checksum. Production systems should use authenticated encryption and integrity protection.
-
-## Research experiment
-
-A useful experiment matrix is:
-
-| Parameter | Example values |
-|---|---|
-| Wavelet | haar, db2, db4, db8, sym4, coif1 |
-| DWT level | 1–6 |
-| Threshold | 0.00–0.20 |
-| Shared key | Any non-negative integer |
-| Channel SNR | -5–40 dB |
-| Packet/sample loss | 0–20% |
-
-For every configuration, compare:
-
-- Original vs recovered waveform.
-- Recovered SNR.
-- MSE.
-- Correlation.
-- Retained coefficient percentage.
-- Coefficient reorder percentage.
-- Correct-key vs wrong-key reconstruction.
-- Subjective intelligibility of the scrambled intermediate audio.
 
 ## Scope
 
