@@ -165,7 +165,7 @@ def make_transmission_wav(scrambled_packet: WaveletPacket, scrambled_audio: np.n
     frames = max(audible.size, payload.size)
     stereo = np.zeros((frames, 2), dtype=np.float32)
     stereo[:audible.size, 0] = np.clip(audible, -1.0, 1.0)
-    stereo[:payload.size, 1] = np.clip(payload, -1.0, 1.0)
+    stereo[:payload.size, 1] = payload  # metadata must not be clipped; channel 2 is non-audible payload
 
     out = io.BytesIO()
     sf.write(out, stereo, int(sample_rate), format="WAV", subtype="FLOAT")
