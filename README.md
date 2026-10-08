@@ -301,7 +301,7 @@ It does not implement military radio protocols, tactical communication systems, 
 
 ## Key-first transmission workflow
 
-Email delivery is intentionally **deferred** for now. The current app focuses on the core transmitter/receiver experiment and uses a portable `.wvt` package.
+Email delivery is intentionally **deferred** for now. The current app focuses on the core transmitter/receiver experiment and uses a portable `.wav` package.
 
 ### Sender
 
@@ -316,10 +316,10 @@ Then:
 3. Only after the key is locked does audio upload become available.
 4. Upload the voice recording.
 5. The locked key drives the deterministic coefficient permutation.
-6. Download the generated `.wvt` transmission package.
-7. Share the `.wvt` package and the same key with the intended receiver through separate channels.
+6. Download the generated `.wav` transmission WAV.
+7. Share the `.wav` package and the same key with the intended receiver through separate channels.
 
-The package contains:
+The transmission WAV contains:
 
 - scrambled wavelet coefficients;
 - wavelet name;
@@ -329,7 +329,7 @@ The package contains:
 - threshold metadata;
 - a coefficient-payload SHA-256 checksum.
 
-The **secret key is never stored in the package**.
+The **secret key is never stored in the WAV**.
 
 ### Receiver
 
@@ -339,7 +339,7 @@ Choose:
 
 Then:
 
-1. Upload the `.wvt` package.
+1. Upload the `.wav` transmission.
 2. Enter the key supplied separately by the sender.
 3. The app derives the same deterministic permutation locally.
 4. The receiver reverses the coefficient ordering and applies IDWT.
@@ -349,7 +349,7 @@ The receiver UI deliberately does not claim that an entered integer is cryptogra
 
 ### Why a checksum is included
 
-The SHA-256 value in the package detects accidental or ordinary payload corruption before reconstruction. It is **not an authentication mechanism**: anyone who can modify both the payload and metadata could replace the checksum. Production systems should use authenticated encryption and integrity protection.
+The current WAV transmission uses a non-secret header in its second audio channel to describe the coefficient payload. The secret key is never embedded in that header. Production systems should add authenticated integrity protection.
 
 ## Scope
 
