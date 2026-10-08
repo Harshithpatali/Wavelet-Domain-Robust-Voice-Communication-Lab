@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
-import smtplib
 import zipfile
-from email.message import EmailMessage
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,11 +41,16 @@ def audio_bytes(signal: np.ndarray, sr: int) -> bytes:
 
 def make_transmission_package(
     scrambled_packet: WaveletPacket,
-    permutation: np.ndarray,
     sample_rate: int,
     threshold_value: float,
 ) -> bytes:
     """Create a portable receiver package without storing the secret key."""
+    scrambled_coeffs = np.asarray(
+        scrambled_packet.coeffs[0], dtype=np.float64
+    ).reshape(-1)
+    coeff_buffer = io.BytesIO()
+    np.save(coeff_buffer, scrambled_coeffs)
+    coeff_bytes = coeff_buffer.getvalue()
     metadata = {
         "format": "wavelet_voice_transmission_v1",
         "sample_rate": int(sample_rate),
@@ -54,18 +58,16 @@ def make_transmission_package(
         "wavelet": scrambled_packet.wavelet,
         "level": int(scrambled_packet.level),
         "threshold": float(threshold_value),
-        "coefficient_count": int(scrambled_packet.coeffs[0].size),
+        "coefficient_count": int(scrambled_coeffs.size),
+        "coefficient_dtype": "float64",
+        "coefficient_sha256": hashlib.sha256(coeff_bytes).hexdigest(),
         "note": "The receiver must enter the transmitter key separately.",
     }
-    # Store only the scrambled coefficients. The permutation/key is deliberately
-    # not included in the package.
-    coeff_buffer = io.BytesIO()
-    np.save(coeff_buffer, np.asarray(scrambled_packet.coeffs[0], dtype=np.float64))
 
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("metadata.json", json.dumps(metadata, indent=2))
-        zf.writestr("scrambled_coefficients.npy", coeff_buffer.getvalue())
+        zf.writestr("scrambled_coefficients.npy", coeff_bytes)
     return out.getvalue()
 
 
@@ -77,9 +79,25 @@ def load_transmission_package(data: bytes) -> tuple[WaveletPacket, dict]:
         metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
         coeffs = np.load(io.BytesIO(zf.read("scrambled_coefficients.npy")), allow_pickle=False)
 
-    required = {"sample_rate", "original_length", "wavelet", "level", "coefficient_count"}
+    required = {
+        "format", "sample_rate", "original_length", "wavelet", "level",
+        "threshold", "coefficient_count", "coefficient_dtype",
+        "coefficient_sha256",
+    }
     if not required.issubset(metadata):
         raise ValueError("Transmission package metadata is incomplete.")
+    if metadata["format"] != "wavelet_voice_transmission_v1":
+        raise ValueError("Unsupported transmission package format.")
+    if metadata["coefficient_dtype"] != "float64":
+        raise ValueError("Unsupported coefficient data type.")
+    if int(metadata["sample_rate"]) <= 0 or int(metadata["original_length"]) <= 0:
+        raise ValueError("Transmission package contains invalid audio metadata.")
+    if int(metadata["level"]) < 1 or not 0 <= float(metadata["threshold"]) <= 1:
+        raise ValueError("Transmission package contains invalid DWT metadata.")
+    payload_buffer = io.BytesIO()
+    np.save(payload_buffer, np.asarray(coeffs, dtype=np.float64))
+    if hashlib.sha256(payload_buffer.getvalue()).hexdigest() != metadata["coefficient_sha256"]:
+        raise ValueError("Transmission package coefficient checksum failed.")
 
     # Recreate the exact coefficient-array layout from deterministic DWT metadata.
     dummy = np.zeros(int(metadata["original_length"]), dtype=np.float64)
@@ -96,61 +114,6 @@ def load_transmission_package(data: bytes) -> tuple[WaveletPacket, dict]:
     )
     return packet, metadata
 
-
-def config_value(name: str, default: str = "") -> str:
-    """Read Streamlit secrets first, then fall back to environment variables."""
-    try:
-        value = st.secrets.get(name)
-        if value is not None:
-            return str(value)
-    except Exception:
-        pass
-    return os.getenv(name, default)
-
-
-def send_transmission_email(
-    recipient: str,
-    subject: str,
-    package: bytes,
-    app_url: str,
-    sender: str,
-) -> None:
-    """Send the scrambled receiver package through configured SMTP."""
-    host = config_value("SMTP_HOST")
-    port = int(config_value("SMTP_PORT", "587"))
-    username = config_value("SMTP_USERNAME")
-    password = config_value("SMTP_PASSWORD")
-    if not all([host, username, password, sender]):
-        raise RuntimeError(
-            "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, "
-            "SMTP_PASSWORD and SENDER_EMAIL in Streamlit secrets/environment variables."
-        )
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = recipient
-    msg.set_content(
-        "A wavelet-domain voice transmission has been shared with you.\n\n"
-        "1. Download the attached .wvt transmission package.\n"
-        f"2. Open the receiver application: {app_url}\n"
-        "3. Choose 'Receive Shared Transmission'.\n"
-        "4. Upload the .wvt package.\n"
-        "5. Enter the receiver key that was shared with you separately.\n"
-        "6. The original voice will only be reconstructed after the correct key is entered.\n\n"
-        "The key is intentionally NOT included in this email."
-    )
-    msg.add_attachment(
-        package,
-        maintype="application",
-        subtype="octet-stream",
-        filename="wavelet_transmission.wvt",
-    )
-
-    with smtplib.SMTP(host, port, timeout=30) as server:
-        server.starttls()
-        server.login(username, password)
-        server.send_message(msg)
 
 
 def safe_normalize(signal: np.ndarray) -> np.ndarray:
@@ -217,8 +180,10 @@ with st.sidebar:
     st.divider()
     st.header("Communication Configuration")
     st.caption(
-        "Set the transmitter and receiver keys independently. "
-        "They must match for the receiver to recover the speech."
+        "Choose and lock the transmitter key before uploading audio. "
+        "Share that same key with the receiver separately."
+        if app_mode == "Transmit & Send"
+        else "Upload a .wvt package and enter the key provided separately by the sender."
     )
     wavelet = st.selectbox(
         "Wavelet",
@@ -233,28 +198,29 @@ with st.sidebar:
         0.02,
         0.005,
     )
-    st.subheader("Transmitter key")
-    transmitter_key_input = st.number_input(
-        "Choose your secret key",
-        min_value=0,
-        max_value=2_147_483_647,
-        value=2026,
-        step=1,
-        disabled=st.session_state.sender_key_locked,
-        help="Choose this BEFORE uploading audio. Send the same key to the receiver separately.",
-    )
-    if not st.session_state.sender_key_locked:
-        if st.button("Set & Lock Key", type="primary", width="stretch"):
-            st.session_state.locked_transmitter_key = int(transmitter_key_input)
-            st.session_state.sender_key_locked = True
-            st.rerun()
-    else:
-        st.success(f"Key locked: {st.session_state.locked_transmitter_key}")
-        if st.button("Change Key", width="stretch"):
-            st.session_state.sender_key_locked = False
-            st.session_state.locked_transmitter_key = None
-            st.rerun()
-
+    if app_mode == "Transmit & Send":
+        st.subheader("Transmitter key")
+        transmitter_key_input = st.number_input(
+            "Choose your secret key",
+            min_value=0,
+            max_value=2_147_483_647,
+            value=2026,
+            step=1,
+            disabled=st.session_state.sender_key_locked,
+            help="Choose this BEFORE uploading audio. Send the same key to the receiver separately.",
+        )
+        if not st.session_state.sender_key_locked:
+            if st.button("Set & Lock Key", type="primary", width="stretch"):
+                st.session_state.locked_transmitter_key = int(transmitter_key_input)
+                st.session_state.sender_key_locked = True
+                st.rerun()
+        else:
+            st.success(f"Key locked: {st.session_state.locked_transmitter_key}")
+            if st.button("Change Key", width="stretch"):
+                st.session_state.sender_key_locked = False
+                st.session_state.locked_transmitter_key = None
+                st.rerun()
+    
     st.divider()
     st.subheader("Simulated Channel")
     snr = st.slider("Channel SNR (dB)", -5.0, 40.0, 20.0, 1.0)
@@ -314,7 +280,11 @@ if app_mode == "Receive Shared Transmission":
             reconstruct(descramble(receive_packet, receive_permutation))
         )
         scrambled_receive = safe_normalize(reconstruct(receive_packet))
-        st.success("Receiver key accepted and the coefficient ordering was reconstructed.")
+        st.success(
+            "Recovery completed using the key you entered. "
+            "This prototype cannot authenticate whether the key is correct; "
+            "compare the recovered voice and metrics to verify the result."
+        )
         st.subheader("Received transmission")
         st.audio(audio_bytes(scrambled_receive, int(receive_metadata["sample_rate"])), format="audio/wav")
         st.subheader("Recovered original voice")
@@ -330,7 +300,7 @@ if app_mode == "Receive Shared Transmission":
             f"Level: {receive_metadata['level']} · "
             "The secret key is not stored in the package."
         )
-    except (ValueError, zipfile.BadZipFile, KeyError) as exc:
+    except (ValueError, zipfile.BadZipFile, KeyError, OSError) as exc:
         st.error(f"Could not open this transmission package: {exc}")
     st.stop()
 
@@ -370,7 +340,6 @@ try:
     )
     transmission_package = make_transmission_package(
         scrambled_packet,
-        transmitter_permutation,
         sr,
         threshold_fraction,
     )
@@ -576,50 +545,6 @@ st.success(
     "the channel. The correct key restores the ordering; the intentionally wrong "
     "key does not."
 )
-
-st.subheader("Share this transmission by email")
-st.caption(
-    "The email contains only the scrambled transmission package. "
-    "The receiver key is never attached or embedded."
-)
-e1, e2 = st.columns([2, 1])
-with e1:
-    recipient_email = st.text_input("Receiver email address", placeholder="receiver@example.com")
-    email_subject = st.text_input(
-        "Email subject",
-        value="Wavelet Voice Transmission — Receiver Key Required",
-    )
-with e2:
-    st.download_button(
-        "Download .wvt receiver package",
-        transmission_package,
-        "wavelet_transmission.wvt",
-        "application/octet-stream",
-        key="download_transmission_package",
-    )
-
-smtp_sender = config_value("SENDER_EMAIL")
-app_url = config_value("APP_URL")
-if recipient_email and st.button("Send transmission via email", type="primary"):
-    if not app_url:
-        st.error(
-            "APP_URL is not configured. Set it to the deployed Streamlit application URL."
-        )
-    else:
-        try:
-            send_transmission_email(
-                recipient_email.strip(),
-                email_subject.strip(),
-                transmission_package,
-                app_url,
-                smtp_sender,
-            )
-            st.success(
-                f"Transmission sent to {recipient_email}. "
-                "The receiver must enter the same key separately."
-            )
-        except (RuntimeError, OSError, smtplib.SMTPException) as exc:
-            st.error(f"Could not send email: {exc}")
 
 st.subheader("Waveform comparison")
 preview_len = min(len(original), sr * 2)
