@@ -602,11 +602,8 @@ smtp_sender = config_value("SENDER_EMAIL")
 app_url = config_value("APP_URL")
 if recipient_email and st.button("Send transmission via email", type="primary"):
     if not app_url:
-        st.error("APP_URL is not configured. Set it to the deployed Streamlit application URL.")
-    elif int(transmitter_key) != int(receiver_key):
-        st.warning(
-            "The current receiver key does not match the transmitter key. "
-            "For a real receiver, share the transmitter key separately."
+        st.error(
+            "APP_URL is not configured. Set it to the deployed Streamlit application URL."
         )
     else:
         try:
@@ -617,12 +614,12 @@ if recipient_email and st.button("Send transmission via email", type="primary"):
                 app_url,
                 smtp_sender,
             )
-        st.success(
-            f"Transmission sent to {recipient_email}. "
-            "The receiver must enter the same key separately."
-        )
-    except (RuntimeError, OSError, smtplib.SMTPException) as exc:
-        st.error(f"Could not send email: {exc}")
+            st.success(
+                f"Transmission sent to {recipient_email}. "
+                "The receiver must enter the same key separately."
+            )
+        except (RuntimeError, OSError, smtplib.SMTPException) as exc:
+            st.error(f"Could not send email: {exc}")
 
 st.subheader("Waveform comparison")
 preview_len = min(len(original), sr * 2)
