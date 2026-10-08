@@ -743,7 +743,7 @@ with st.sidebar:
 
     st.markdown('<div class="side-sec">Codec Configuration</div>', unsafe_allow_html=True)
     if app_mode.startswith("Receive"):
-        st.caption("Select the same wavelet and DWT level used by the sender.")
+        st.caption("The transmission carries its wavelet and DWT level metadata automatically.")
     wavelet = st.selectbox("Wavelet", ["haar", "db2", "db4", "db8", "sym4", "coif1"], index=2)
     level = st.slider("DWT level", 1, 6, 4)
     threshold_fraction = st.slider("Coefficient threshold", 0.0, 0.20, 0.02, 0.005)
@@ -886,7 +886,7 @@ if app_mode == "Receive Shared Transmission":
             )
     except (ValueError, OSError, RuntimeError) as exc:
         message = str(exc)
-        if "stereo WAV" in message:
+        if "receiver-compatible stereo WAV" in message:
             message += " Use the **Download transmission WAV** button from the transmitter; the separate scrambled-audio preview cannot contain the recovery coefficient payload."
         st.error(f"Could not read this transmission WAV: {message}")
 
@@ -1012,10 +1012,10 @@ with tab_pipe:
     )
     with c2:
         with st.container(border=True):
-            stage_head("2", "Transmitted", "PORTABLE STEREO WAV", ACCENT["key"])
+            stage_head("2", "Transmitted", "PORTABLE WAV TRANSMISSION", ACCENT["key"])
             st.audio(transmission_wav, format="audio/wav")
             st.caption(
-                "This is the actual receiver-compatible transmission. Channel 1 carries the audible scrambled voice; channel 2 carries the scrambled coefficient payload at an inaudible carrier level."
+                "This is the actual receiver-compatible transmission. The WAV plays the scrambled voice normally; its private RIFF payload carries the scrambled wavelet coefficients and codec metadata without embedding the secret key."
             )
             st.download_button(
                 "Download transmission WAV",
