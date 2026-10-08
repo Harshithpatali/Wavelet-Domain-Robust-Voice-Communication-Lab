@@ -97,6 +97,17 @@ def load_transmission_package(data: bytes) -> tuple[WaveletPacket, dict]:
     return packet, metadata
 
 
+def config_value(name: str, default: str = "") -> str:
+    """Read Streamlit secrets first, then fall back to environment variables."""
+    try:
+        value = st.secrets.get(name)
+        if value is not None:
+            return str(value)
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
 def send_transmission_email(
     recipient: str,
     subject: str,
@@ -105,10 +116,10 @@ def send_transmission_email(
     sender: str,
 ) -> None:
     """Send the scrambled receiver package through configured SMTP."""
-    host = os.getenv("SMTP_HOST", "")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
+    host = config_value("SMTP_HOST")
+    port = int(config_value("SMTP_PORT", "587"))
+    username = config_value("SMTP_USERNAME")
+    password = config_value("SMTP_PASSWORD")
     if not all([host, username, password, sender]):
         raise RuntimeError(
             "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, "
@@ -573,8 +584,8 @@ with e2:
         key="download_transmission_package",
     )
 
-smtp_sender = os.getenv("SENDER_EMAIL", "")
-app_url = os.getenv("APP_URL", "")
+smtp_sender = config_value("SENDER_EMAIL")
+app_url = config_value("APP_URL")
 if recipient_email and st.button("Send transmission via email", type="primary"):
     if not app_url:
         st.error("APP_URL is not configured. Set it to the deployed Streamlit application URL.")
