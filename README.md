@@ -186,12 +186,45 @@ Wavelet-Domain-Robust-Voice-Communication-Lab/
 │   ├── metrics.py
 │   └── wavelet_codec.py
 └── tests/
-    ├── test_audio.py
+    ├── test_audio_formats.py
     ├── test_channel.py
+    ├── test_experiment.py
     └── test_wavelet_codec.py
 ```
 
 
+
+## Receiver WAV workflow
+
+Email/SMTP is intentionally deferred. The current app uses a single WAV transmission file.
+
+### Sender
+
+1. Choose the secret key.
+2. Click **Set & Lock Key**.
+3. Only then upload the original voice.
+4. The app performs DWT, thresholding, and keyed coefficient scrambling.
+5. Download **voice_transmission.wav**.
+6. Send that WAV and the same key separately to the receiver.
+
+The transmission WAV is stereo:
+
+- **Channel 1:** the audible scrambled voice, so the receiver can listen before entering the key.
+- **Channel 2:** the scrambled wavelet coefficient payload plus a small non-secret header required to reconstruct the coefficient layout.
+
+The secret key is **never stored in the WAV**.
+
+### Receiver
+
+1. Select **Receive Shared Transmission**.
+2. Upload **voice_transmission.wav**.
+3. The app immediately presents the **scrambled transmission** for listening.
+4. Enter the key supplied separately by the sender.
+5. Click **Recover original voice**.
+6. The app reverses the keyed coefficient permutation and performs IDWT.
+7. Listen to or download **recovered_voice.wav**.
+
+The receiver does not need .wvt, .zip, or SMTP/email configuration.
 
 ## Transmission Verification Dashboard
 
