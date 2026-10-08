@@ -1,20 +1,31 @@
 # Test status
 
-The repository now has GitHub Actions CI on pushes and pull requests to `main`.
+The repository has GitHub Actions CI on pushes and pull requests to main.
 
-- Python syntax/bytecode compilation: **CI checked**
-- Audio generation: **PASS**
-- AWGN channel simulation: **PASS**
-- Packet-loss simulation: **PASS**
-- MSE/SNR/correlation metrics: **PASS**
-- DWT/IDWT round-trip and threshold tests: **PASS**
-- Keyed scramble/descramble tests: **PASS**
-- Wrong-key recovery test: **PASS**
-- WAV byte-input decoding: **PASS**
-- M4A decode → PCM normalization test: **PASS**
-- End-to-end keyed CLI experiment: **CI checked**
-- `.wvt` package checksum validation: **implemented**
+## Automated checks
 
-The Streamlit uploader accepts WAV, M4A, MP3, FLAC, and AAC. M4A/MP3/AAC are decoded through `imageio-ffmpeg` and normalized to 16 kHz mono PCM before wavelet processing.
+- Python syntax/bytecode compilation: configured in CI
+- Audio generation: PASS
+- AWGN channel simulation: PASS
+- Packet-loss simulation: PASS
+- MSE/SNR/correlation metrics: PASS
+- DWT/IDWT round-trip and threshold tests: PASS
+- Keyed scramble/descramble tests: PASS
+- Wrong-key recovery test: PASS
+- WAV byte-input decoding: PASS
+- M4A decode → PCM normalization test: PASS
+- End-to-end keyed CLI experiment: configured in CI
 
-The email/SMTP feature is intentionally deferred. The current app uses direct `.wvt` package download and separate key sharing.
+## Current transmission workflow
+
+- Sender key must be locked before audio upload.
+- Sender exports a stereo voice_transmission.wav.
+- Receiver accepts WAV only.
+- Receiver can listen to the scrambled voice before entering the key.
+- Receiver enters the separately shared key and recovers the original voice.
+- The secret key is never stored in the WAV.
+
+## Important limitation
+
+The WAV header carries only non-secret reconstruction metadata. The keyed permutation is reversible signal obfuscation, not cryptographic encryption. Production confidentiality and integrity should use authenticated encryption.
+
