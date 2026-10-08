@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from src.transmission import load_transmission_wav, make_transmission_wav
+from src.wavelet_codec import load_transmission_wav, make_transmission_wav
 from src.wavelet_codec import decompose, descramble, make_permutation, reconstruct, scramble, threshold
 
 
