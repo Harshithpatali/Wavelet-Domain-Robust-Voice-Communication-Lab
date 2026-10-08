@@ -41,6 +41,38 @@ def safe_normalize(signal: np.ndarray) -> np.ndarray:
     return x / peak if peak > 1.0 else x
 
 
+
+
+def coefficient_correlation(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float64).reshape(-1)
+    b = np.asarray(b, dtype=np.float64).reshape(-1)
+    if a.size != b.size or a.size < 2:
+        return float("nan")
+    a0 = a - np.mean(a)
+    b0 = b - np.mean(b)
+    denom = np.linalg.norm(a0) * np.linalg.norm(b0)
+    return float(np.dot(a0, b0) / denom) if denom > 0 else 0.0
+
+
+def permutation_change_rate(permutation: np.ndarray) -> float:
+    permutation = np.asarray(permutation, dtype=np.int64).reshape(-1)
+    if permutation.size == 0:
+        return 0.0
+    return float(np.mean(permutation != np.arange(permutation.size)))
+
+
+def wrong_key_reconstruction(
+    scrambled_packet: WaveletPacket,
+    key: int,
+) -> np.ndarray:
+    wrong_permutation = make_permutation(
+        scrambled_packet.coeffs[0].size,
+        int(key),
+    )
+    wrong_packet = descramble(scrambled_packet, wrong_permutation)
+    return safe_normalize(reconstruct(wrong_packet))
+
+
 def packet_with_coeffs(packet: WaveletPacket, coeffs: np.ndarray) -> WaveletPacket:
     return WaveletPacket(
         coeffs=[np.asarray(coeffs, dtype=np.float64)],
