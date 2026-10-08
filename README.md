@@ -199,7 +199,7 @@ The transmission WAV carries the non-secret length and coefficient metadata; the
 
 ### 🔵 Receiver (web app)
 
-The sender can create a **one-click receiver link** from the app. The transmission is temporarily stored in the Wavelet Share service and the receiver link carries a random transmission ID.
+The sender can create a **one-click receiver link** from the app. The transmission is temporarily stored in the project's Neon Postgres database and the receiver link carries a random transmission ID.
 
 ```text
 1.  Sender locks the secret key
@@ -289,6 +289,17 @@ The private payload stores:
 - scrambled wavelet coefficients
 
 The **secret key is never stored in the WAV**.
+
+
+### Streamlit secret for one-click sharing
+
+Add your Neon Postgres connection string to the Streamlit app secrets as:
+
+```toml
+NEON_DATABASE_URL = "postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require"
+```
+
+The app creates the `wavelet_transmissions` table automatically on first use. It stores the transmission WAV as PostgreSQL `bytea` plus a random UUID and expiry timestamp; the recovery key is never stored in the database.
 
 ### Receiver Link
 
