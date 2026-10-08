@@ -297,3 +297,73 @@ This repository is intentionally limited to an academic simulation of:
 - Quantitative audio-quality evaluation.
 
 It does not implement military radio protocols, tactical communication systems, frequency hopping, anti-interception procedures, or operational deployment.
+
+## Email transmission and receiver-key workflow
+
+The app now supports a complete **sender → email → receiver** demonstration.
+
+### Sender
+
+Choose:
+
+    Communication Mode → Transmit & Send
+
+Then:
+
+1. Upload the voice recording.
+2. Set the **Transmitter key**.
+3. Run the transmission pipeline.
+4. In **Share this transmission by email**, enter the receiver's email address.
+5. Click **Send transmission via email**.
+
+The app creates a `.wvt` receiver package containing:
+
+- scrambled wavelet coefficients;
+- wavelet name;
+- DWT level;
+- sample rate;
+- original signal length;
+- experiment metadata.
+
+The **secret key is deliberately not stored in the package and is not included in the email**.
+
+### Receiver
+
+The recipient chooses:
+
+    Communication Mode → Receive Shared Transmission
+
+Then:
+
+1. Download the `.wvt` attachment from the email.
+2. Open the deployed Streamlit application.
+3. Upload the `.wvt` package.
+4. Enter the receiver key.
+5. The app reconstructs the coefficient permutation from that key.
+6. With the correct key, the original voice can be played.
+7. With an incorrect key, the coefficient order remains incorrect and the reconstructed signal is not the intended voice.
+
+The receiver therefore has to explicitly enter the key before the original voice is recovered.
+
+### Email configuration
+
+The application uses SMTP and does not hard-code email credentials.
+
+For local development, configure environment variables:
+
+    SMTP_HOST=smtp.gmail.com
+    SMTP_PORT=587
+    SMTP_USERNAME=your-email@example.com
+    SMTP_PASSWORD=your-email-app-password
+    SENDER_EMAIL=your-email@example.com
+    APP_URL=https://your-streamlit-app.streamlit.app
+
+For Streamlit Cloud, put the corresponding values in **App Settings → Secrets** and expose them to the application environment as appropriate for the deployment.
+
+For Gmail, use an **App Password** rather than your normal account password when SMTP authentication requires it.
+
+The email contains the receiver package and instructions, but **never the scrambling key**. For this research prototype, the key should be communicated through a separate trusted channel.
+
+### Important security note
+
+The `.wvt` package is an application-specific research format and the keyed coefficient permutation is reversible obfuscation, not authenticated cryptographic encryption. This feature demonstrates the end-to-end key-gated workflow; it should not be presented as secure email encryption or cryptographic protection.
