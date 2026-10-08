@@ -188,6 +188,13 @@ try:
     )
     reconstructed = safe_normalize(reconstruct(recovered_coeff_packet))
 
+    # Verification receiver: intentionally use a different key.
+    wrong_key = (int(key) + 1) % 2_147_483_648
+    wrong_key_audio = wrong_key_reconstruction(
+        received_scrambled_packet,
+        wrong_key,
+    )
+
 except ValueError as exc:
     st.error(str(exc))
     st.stop()
