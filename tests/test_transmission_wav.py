@@ -45,7 +45,7 @@ def test_transmission_rejects_plain_mono_audio():
     buf = io.BytesIO()
     sf.write(buf, np.zeros(8000, dtype=np.float32), 16000, format="WAV")
 
-    with pytest.raises(ValueError, match="stereo WAV"):
+    with pytest.raises(ValueError, match="recovery payload"):
         load_transmission_wav(buf.getvalue(), "db4", 4)
 
 
