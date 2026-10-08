@@ -38,7 +38,7 @@
 3. [Quick Start](#-quick-start)
 4. [How It Works](#-how-it-works)
 5. [Usage](#-usage)
-6. [The `.wvt` Package Format](#-the-wvt-package-format)
+6. [The transmission WAV format](#-the-transmission-wav-format)
 7. [Verification Dashboard](#-verification-dashboard)
 8. [Experiment Matrix](#-experiment-matrix)
 9. [Interpreting Results](#-interpreting-results)
@@ -178,7 +178,7 @@ $$r_i = m_i \cdot (s_i + w_i), \qquad w_i \sim \mathcal{N}(0,\sigma^2), \quad m_
 | Wrong level | Band boundaries differ → permutation applies to a differently-laid-out vector |
 | Wrong length | Permutation length mismatch / padding errors |
 
-The `.wvt` package carries all non-secret configuration, so only the key has to be exchanged separately.
+The transmission WAV carries the non-secret length and coefficient metadata; the receiver currently selects the same wavelet and DWT level separately.
 
 ---
 
@@ -371,7 +371,7 @@ The keyed permutation is **reversible signal obfuscation**, not encryption. It i
 | **Small key space** | The key is a non-negative integer used to seed a pseudo-random permutation. Its search space is tiny compared with a 128/256-bit cryptographic key. |
 | **Magnitude statistics preserved** | A permutation reorders values but doesn't change them. The coefficient magnitude histogram (visible in the distribution plot) is identical before and after scrambling. |
 | **Known-plaintext exposure** | If an attacker knows or can guess a portion of the original coefficients, the permutation can be partially recovered. |
-| **No authentication** | A modified `.wvt` still decodes; the recomputable checksum cannot prove origin or detect deliberate tampering. |
+| **No authentication** | A modified transmission WAV can be altered without proving origin or authenticity. |
 | **Structure leakage** | Speech coefficients have exploitable structure (e.g., energy concentrated in low bands), which can guide an attacker toward the correct ordering. |
 
 For real confidentiality and integrity, use a **standard, reviewed authenticated-encryption construction**.
@@ -507,7 +507,7 @@ Ideas for future work (contributions welcome):
 - [ ] Burst-loss channel model (Gilbert–Elliott)
 - [ ] Perceptual metrics (PESQ / STOI) alongside SNR and MSE
 - [ ] Band-wise permutation vs. global permutation comparison
-- [ ] Optional authenticated-encryption wrapper for the `.wvt` payload, to contrast with obfuscation
+- [ ] Optional authenticated-encryption wrapper for the transmission payload, to contrast with obfuscation
 - [ ] Batch experiment runner with automatic sweep plots
 - [ ] Docker image for one-command setup
 
