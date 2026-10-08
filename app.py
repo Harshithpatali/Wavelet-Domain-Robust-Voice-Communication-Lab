@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 
 import matplotlib
 
@@ -15,6 +16,7 @@ import streamlit as st
 from src.audio import load_audio_bytes, synthetic_voice_like
 from src.channel import add_awgn, packet_loss
 from src.metrics import correlation, mse, snr_db
+from src.share_store import load_transmission, store_transmission
 from src.wavelet_codec import (
     WaveletPacket,
     decompose,
@@ -49,7 +51,6 @@ if "locked_transmitter_key" not in st.session_state:
 
 # Shareable receiver entry point. The link opens this app directly in receiver mode.
 APP_URL = "https://wavelet-domain-robust-voice-communication-lab.streamlit.app/"
-SHARE_API_URL = "https://wavelet-voice-share.harshikollur302.workers.dev"
 receiver_query_mode = str(st.query_params.get("mode", "")).lower()
 shared_transmission_id = str(st.query_params.get("tx", "")).strip()
 receiver_link = f"{APP_URL}?mode=receive"
@@ -500,30 +501,24 @@ ACCENT = {
 # =====================================================================
 # UI HELPERS
 # =====================================================================
-def fetch_shared_transmission(transmission_id: str) -> bytes:
-    """Fetch a sender-shared transmission from the Wavelet Share service."""
-    import re
-    from urllib.error import HTTPError, URLError
-    from urllib.request import Request, urlopen
-
-    if not re.fullmatch(r"[0-9a-fA-F]{32}", transmission_id):
-        raise ValueError("The shared transmission link contains an invalid transmission ID.")
-
-    url = f"{SHARE_API_URL}/payload/{transmission_id}"
-    request = Request(url, headers={"Accept": "audio/wav"})
+def get_neon_database_url() -> str | None:
+    """Read the Neon connection string from Streamlit secrets/environment."""
     try:
-        with urlopen(request, timeout=20) as response:
-            data = response.read()
-    except HTTPError as exc:
-        if exc.code == 404:
-            raise ValueError("This shared transmission has expired or does not exist.") from exc
-        raise ValueError("The shared transmission service could not return the audio.") from exc
-    except URLError as exc:
-        raise ValueError("Could not reach the shared transmission service.") from exc
+        value = st.secrets.get("NEON_DATABASE_URL")
+    except Exception:
+        value = None
+    if value:
+        return str(value)
+    return os.getenv("NEON_DATABASE_URL") or os.getenv("DATABASE_URL")
 
-    if not data.startswith(b"RIFF") or data[8:12] != b"WAVE":
-        raise ValueError("The shared transmission service returned an invalid WAV file.")
-    return data
+
+def load_shared_transmission_from_neon(transmission_id: str) -> bytes:
+    database_url = get_neon_database_url()
+    if not database_url:
+        raise ValueError(
+            "Receiver sharing is not configured. Add NEON_DATABASE_URL to Streamlit secrets."
+        )
+    return load_transmission(database_url, transmission_id)
 
 
 def stage_head(number: str, title: str, subtitle: str, accent: str) -> None:
@@ -888,8 +883,8 @@ if app_mode == "Receive Shared Transmission":
 
     try:
         if shared_transmission_id:
-            transmission_bytes = fetch_shared_transmission(shared_transmission_id)
-            transmission_source = "Shared receiver link"
+            transmission_bytes = load_shared_transmission_from_neon(shared_transmission_id)
+            transmission_source = "Shared receiver link (Neon)"
         else:
             transmission_bytes = transmission_upload.getvalue()
             transmission_source = transmission_upload.name
@@ -1126,39 +1121,47 @@ with tab_pipe:
 
     st.markdown("#### 🔗 One-click receiver link")
     st.caption(
-        "Create one shareable link that stores this transmission temporarily. "
-        "When the receiver clicks it, the app opens in Receive mode and the WAV is loaded automatically."
+        "Create one shareable link that stores this transmission temporarily in Neon. "
+        "When the receiver clicks it, the app opens in Receive mode and loads the WAV automatically."
     )
 
-    if st.button("🔗 Create receiver link", type="primary", width="stretch", key="create_receiver_link"):
+    if st.button(
+        "🔗 Create receiver link",
+        type="primary",
+        width="stretch",
+        key="create_receiver_link",
+    ):
         try:
-            from urllib.error import HTTPError, URLError
-            from urllib.request import Request, urlopen
-            share_request = Request(
-                f"{SHARE_API_URL}/share",
-                data=transmission_wav,
-                method="POST",
-                headers={"Content-Type": "audio/wav", "Accept": "application/json"},
+            database_url = get_neon_database_url()
+            if not database_url:
+                raise ValueError(
+                    "NEON_DATABASE_URL is not configured in Streamlit secrets."
+                )
+            transmission_id = store_transmission(
+                database_url,
+                transmission_wav,
+                ttl_hours=168,
             )
-            with urlopen(share_request, timeout=20) as response:
-                import json as _json
-                share_payload = _json.loads(response.read().decode("utf-8"))
-            st.session_state["receiver_share_url"] = share_payload["receiver_url"]
-            st.session_state["receiver_share_expiry"] = share_payload.get("expires_in_hours", 168)
-        except (HTTPError, URLError, ValueError, KeyError) as exc:
+            share_url = (
+                f"{APP_URL}?mode=receive&tx={transmission_id}"
+            )
+            st.session_state["receiver_share_url"] = share_url
+            st.session_state["receiver_share_expiry"] = 168
+        except Exception as exc:
             st.error(f"Could not create receiver link: {exc}")
 
     if st.session_state.get("receiver_share_url"):
         share_url = st.session_state["receiver_share_url"]
         expiry_hours = st.session_state.get("receiver_share_expiry", 168)
-        st.success(f"Receiver link ready. It keeps the transmission for about {expiry_hours} hours.")
+        st.success(
+            f"Receiver link ready. The transmission expires after about {expiry_hours} hours."
+        )
         st.code(share_url)
         st.markdown(f"[🚀 Open receiver link]({share_url})")
         st.caption(
-            "Send this link to the receiver. They do not need to upload the WAV manually. "
-            "The receiver still needs the secret key separately."
+            "Send this link to the receiver. No WAV upload is required on the receiver side. "
+            "Send the secret key separately."
         )
-
 
 # -------------------------------------------------------------- VERIFY
 with tab_verify:
