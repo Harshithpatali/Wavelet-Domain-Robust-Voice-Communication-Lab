@@ -22,7 +22,8 @@ def test_transmission_wav_round_trip():
     raw, read_sr = sf.read(io.BytesIO(data), always_2d=True, dtype="float64")
 
     assert read_sr == sr
-    assert raw.shape[1] == 2
+    # V3 is intentionally mono: the recovery payload lives in a private RIFF chunk.
+    assert raw.shape[1] == 1
 
     received_packet, received_scrambled, received_sr = load_transmission_wav(
         data, "db4", 4
@@ -40,7 +41,7 @@ def test_transmission_wav_round_trip():
     assert corr > 0.999
 
 
-def test_transmission_rejects_mono_preview():
+def test_transmission_rejects_plain_mono_audio():
     buf = io.BytesIO()
     sf.write(buf, np.zeros(8000, dtype=np.float32), 16000, format="WAV")
 
