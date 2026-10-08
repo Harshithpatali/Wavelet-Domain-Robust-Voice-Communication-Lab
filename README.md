@@ -164,6 +164,7 @@ python run_experiment.py \
   --wavelet db4 \
   --level 4 \
   --threshold 0.02 \
+  --key 2026 \
   --snr-db 10 \
   --packet-loss 0.02
 ```
@@ -298,9 +299,9 @@ This repository is intentionally limited to an academic simulation of:
 
 It does not implement military radio protocols, tactical communication systems, frequency hopping, anti-interception procedures, or operational deployment.
 
-## Email transmission and receiver-key workflow
+## Key-first transmission workflow
 
-The app now supports a complete **sender → email → receiver** demonstration.
+Email delivery is intentionally **deferred** for now. The current app focuses on the core transmitter/receiver experiment and uses a portable `.wvt` package.
 
 ### Sender
 
@@ -310,63 +311,86 @@ Choose:
 
 Then:
 
-1. Choose the **Transmitter key first**.
+1. Choose the secret **transmitter key**.
 2. Click **Set & Lock Key**.
-3. Only after the key is locked does the audio upload control become available.
+3. Only after the key is locked does audio upload become available.
 4. Upload the voice recording.
-5. The locked key is used for the coefficient scrambling.
-6. In **Share this transmission by email**, enter the receiver's email address.
-7. Click **Send transmission via email**.
-8. Share the same key with the receiver through a separate trusted channel.
+5. The locked key drives the deterministic coefficient permutation.
+6. Download the generated `.wvt` transmission package.
+7. Share the `.wvt` package and the same key with the intended receiver through separate channels.
 
-The app creates a `.wvt` receiver package containing:
+The package contains:
 
 - scrambled wavelet coefficients;
 - wavelet name;
 - DWT level;
 - sample rate;
 - original signal length;
-- experiment metadata.
+- threshold metadata;
+- a coefficient-payload SHA-256 checksum.
 
-The **secret key is deliberately not stored in the package and is not included in the email**.
+The **secret key is never stored in the package**.
 
 ### Receiver
 
-The recipient chooses:
+Choose:
 
     Communication Mode → Receive Shared Transmission
 
 Then:
 
-1. Download the `.wvt` attachment from the email.
-2. Open the deployed Streamlit application.
-3. Upload the `.wvt` package.
-4. Enter the receiver key.
-5. The app reconstructs the coefficient permutation from that key.
-6. With the correct key, the original voice can be played.
-7. With an incorrect key, the coefficient order remains incorrect and the reconstructed signal is not the intended voice.
+1. Upload the `.wvt` package.
+2. Enter the key supplied separately by the sender.
+3. The app derives the same deterministic permutation locally.
+4. The receiver reverses the coefficient ordering and applies IDWT.
+5. Listen to or download the recovered WAV.
 
-The receiver therefore has to explicitly enter the same key before the original voice is recovered. The sender does not enter a receiver key: there is one secret transmission key, chosen and locked before the audio is uploaded.
+The receiver UI deliberately does not claim that an entered integer is cryptographically authenticated. A correct key is verified experimentally by the recovered audio and similarity metrics.
 
-### Email configuration
+### Why a checksum is included
 
-The application uses SMTP and does not hard-code email credentials.
+The SHA-256 value in the package detects accidental or ordinary payload corruption before reconstruction. It is **not an authentication mechanism**: anyone who can modify both the payload and metadata could replace the checksum. Production systems should use authenticated encryption and integrity protection.
 
-For local development, configure environment variables:
+## Research experiment
 
-    SMTP_HOST=smtp.gmail.com
-    SMTP_PORT=587
-    SMTP_USERNAME=your-email@example.com
-    SMTP_PASSWORD=your-email-app-password
-    SENDER_EMAIL=your-email@example.com
-    APP_URL=https://your-streamlit-app.streamlit.app
+A useful experiment matrix is:
 
-For Streamlit Cloud, put the values directly in **App Settings → Secrets**. The application reads Streamlit secrets first and falls back to environment variables.
+| Parameter | Example values |
+|---|---|
+| Wavelet | haar, db2, db4, db8, sym4, coif1 |
+| DWT level | 1–6 |
+| Threshold | 0.00–0.20 |
+| Shared key | Any non-negative integer |
+| Channel SNR | -5–40 dB |
+| Packet/sample loss | 0–20% |
 
-For Gmail, use an **App Password** rather than your normal account password when SMTP authentication requires it.
+For every configuration, compare:
 
-The email contains the receiver package and instructions, but **never the scrambling key**. For this research prototype, the key should be communicated through a separate trusted channel.
+- Original vs recovered waveform.
+- Recovered SNR.
+- MSE.
+- Correlation.
+- Retained coefficient percentage.
+- Coefficient reorder percentage.
+- Correct-key vs wrong-key reconstruction.
+- Subjective intelligibility of the scrambled intermediate audio.
 
-### Important security note
+## Scope
 
-The `.wvt` package is an application-specific research format and the keyed coefficient permutation is reversible obfuscation, not authenticated cryptographic encryption. This feature demonstrates the end-to-end key-gated workflow; it should not be presented as secure email encryption or cryptographic protection.
+This repository is intentionally limited to an academic simulation of:
+
+- Digital signal processing.
+- Wavelet-domain representation.
+- Reversible coefficient scrambling.
+- Simulated communication-channel degradation.
+- Receiver-side reconstruction.
+- Quantitative audio-quality evaluation.
+
+It does not implement military radio protocols, tactical communication systems, frequency hopping, anti-interception procedures, or operational deployment.
+
+## Security note
+
+The keyed coefficient permutation is **reversible signal obfuscation, not cryptographic encryption**. It should not be described as military-grade security or as a replacement for cryptography.
+
+For real confidentiality, integrity, and authentication, use a standard reviewed authenticated-encryption construction.
+
