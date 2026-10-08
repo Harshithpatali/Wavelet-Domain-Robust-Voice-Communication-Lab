@@ -310,11 +310,14 @@ Choose:
 
 Then:
 
-1. Upload the voice recording.
-2. Set the **Transmitter key**.
-3. Run the transmission pipeline.
-4. In **Share this transmission by email**, enter the receiver's email address.
-5. Click **Send transmission via email**.
+1. Choose the **Transmitter key first**.
+2. Click **Set & Lock Key**.
+3. Only after the key is locked does the audio upload control become available.
+4. Upload the voice recording.
+5. The locked key is used for the coefficient scrambling.
+6. In **Share this transmission by email**, enter the receiver's email address.
+7. Click **Send transmission via email**.
+8. Share the same key with the receiver through a separate trusted channel.
 
 The app creates a `.wvt` receiver package containing:
 
@@ -343,7 +346,7 @@ Then:
 6. With the correct key, the original voice can be played.
 7. With an incorrect key, the coefficient order remains incorrect and the reconstructed signal is not the intended voice.
 
-The receiver therefore has to explicitly enter the key before the original voice is recovered.
+The receiver therefore has to explicitly enter the same key before the original voice is recovered. The sender does not enter a receiver key: there is one secret transmission key, chosen and locked before the audio is uploaded.
 
 ### Email configuration
 
