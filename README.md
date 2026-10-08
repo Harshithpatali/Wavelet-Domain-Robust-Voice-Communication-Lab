@@ -190,6 +190,45 @@ Wavelet-Domain-Robust-Voice-Communication-Lab/
     └── test_wavelet_codec.py
 ```
 
+
+
+## Transmission Verification Dashboard
+
+The Streamlit app now includes a dedicated verification section so the experiment is not based only on listening.
+
+It reports:
+
+- **Coefficients reordered (%)** — fraction of coefficient positions changed by the key-driven permutation.
+- **Original ↔ scrambled coefficient correlation** — similarity between the coefficient stream before and after scrambling.
+- **Original ↔ correct-key correlation** — similarity between the original speech and correctly recovered speech.
+- **Original ↔ wrong-key correlation** — similarity after deliberately using a different receiver key.
+- Correct-key and wrong-key reconstruction SNR.
+
+### Coefficient-order visualization
+
+The dashboard plots:
+
+1. Original coefficient values versus the transmitted scrambled ordering.
+2. The permutation map for the first coefficients.
+
+A diagonal permutation map would indicate no reordering. A scrambled map deviates from that diagonal.
+
+### Wrong-key demonstration
+
+The app automatically tests:
+
+```text
+Transmitter key = K
+Receiver key    = K      → correct recovery ✓
+
+Transmitter key = K
+Receiver key    = K + 1  → incorrect recovery ✗
+```
+
+The wrong-key audio is included as a separate playable stage. This provides a practical demonstration that the receiver needs the shared scrambling key to restore the coefficient ordering.
+
+The wrong-key test is a **demonstration of the implemented reversible permutation**, not a cryptographic security proof.
+
 ## Research experiment
 
 A useful experiment matrix is:
