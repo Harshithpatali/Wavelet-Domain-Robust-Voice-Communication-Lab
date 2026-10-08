@@ -1,22 +1,102 @@
-# Wavelet-Domain Robust Voice Communication
+# Wavelet-Domain Robust Voice Communication Lab
 
-A research prototype for studying wavelet-domain speech representation and reconstruction over simulated noisy wireless channels.
+An academic signal-processing prototype that demonstrates a **transmitter → scrambled channel → receiver** workflow for voice.
 
-## What it does
+The central experiment is:
 
-- Loads a WAV speech recording or generates a synthetic test signal.
-- Resamples audio to a configurable sample rate.
-- Applies Discrete Wavelet Transform (DWT).
-- Optionally thresholds small wavelet coefficients for compression.
-- Simulates additive white Gaussian noise (AWGN) and packet loss.
-- Reconstructs speech with inverse DWT (IDWT).
-- Calculates MSE, SNR, retained-coefficient ratio, compression proxy, and correlation.
-- Provides a Streamlit interface for interactive experiments.
-- Includes automated tests.
+```text
+TRANSMITTER
+Original speech
+      ↓
+DWT (selected wavelet + level)
+      ↓
+Coefficient thresholding
+      ↓
+KEYED COEFFICIENT SCRAMBLING
+      ↓
+────────────────────────────────
+     TRANSMITTED SIGNAL
+     intentionally unintelligible
+────────────────────────────────
+      ↓
+AWGN / packet-loss simulation
+      ↓
+RECEIVER
+Same wavelet + level + threshold + shared key
+      ↓
+Reverse coefficient scrambling
+      ↓
+IDWT
+      ↓
+Recovered speech
+```
 
-## Safety / scope
+## Important distinction
 
-This is an academic signal-processing and communications simulation. It does not implement military radio protocols, frequency hopping, anti-interception mechanisms, tactical communications, or operational encryption.
+A wavelet transform by itself is **not encryption**. DWT/IDWT is a reversible representation of the signal.
+
+This project adds a **deterministic keyed permutation of the flattened wavelet coefficients** so that the signal reconstructed from the transmitted representation is intentionally not recognizable as speech. The receiver uses the same key to restore the coefficient ordering before IDWT.
+
+This keyed permutation is an **academic obfuscation/signal-processing demonstration, not cryptographic security**. For actual confidentiality, a standard authenticated encryption scheme should be used.
+
+## What the Streamlit app demonstrates
+
+The UI exposes the complete communication path:
+
+1. **Original Audio** — clear input speech.
+2. **Transmitted / Scrambled Audio** — the intentionally unintelligible intermediate representation.
+3. **Received Scrambled Audio** — the scrambled representation after simulated channel noise/loss.
+4. **Receiver Recovered Audio** — coefficient descrambling followed by IDWT.
+
+The sidebar contains the shared transmitter/receiver configuration:
+
+- Wavelet: Haar, Daubechies, Symlet, or Coiflet options.
+- DWT decomposition level.
+- Coefficient threshold.
+- Shared scrambling key.
+- Channel SNR.
+- Packet/sample loss probability.
+- Channel random seed.
+
+The same wavelet, level, threshold and scrambling key are used by the receiver in the experiment.
+
+## Why the middle audio is different from the original
+
+The earlier version of this project performed:
+
+```text
+DWT → threshold → IDWT
+```
+
+That naturally produces speech-like audio because the inverse transform reconstructs the signal.
+
+The current version performs:
+
+```text
+DWT
+  ↓
+threshold
+  ↓
+keyed coefficient permutation
+  ↓
+IDWT
+```
+
+The coefficient ordering is intentionally changed before the intermediate audio is reconstructed. Therefore the **transmitted/scrambled audio is not expected to sound like the original speech**.
+
+At the receiver:
+
+```text
+received scrambled coefficients
+  ↓
+reverse the same permutation
+  ↓
+original coefficient ordering
+  ↓
+IDWT
+```
+
+This restores the signal, subject to any simulated channel corruption.
 
 ## Installation
 
@@ -24,11 +104,19 @@ Python 3.10+ is recommended.
 
 ```bash
 python -m venv .venv
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-# Linux/macOS
-source .venv/bin/activate
+```
 
+### Windows PowerShell
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### Linux/macOS
+
+```bash
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -38,12 +126,46 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Open the local URL shown by Streamlit.
+Then open the local URL shown by Streamlit.
+
+If no file is uploaded, the app uses a deterministic synthetic speech-like signal.
+
+## Supported audio files
+
+The app accepts:
+
+- WAV
+- M4A
+- MP3
+- FLAC
+- AAC
+
+M4A/MP3/AAC are decoded through `imageio-ffmpeg` and normalized to 16 kHz mono PCM before DWT processing. Recovered audio can be downloaded as WAV.
+
+## Run tests
+
+```bash
+pytest
+```
+
+The test suite verifies:
+
+- Exact DWT/IDWT reconstruction.
+- Coefficient thresholding.
+- Scrambling changes coefficient ordering.
+- Scramble → descramble is exactly reversible.
+- The same key produces the same permutation.
 
 ## Run the command-line experiment
 
 ```bash
-python run_experiment.py --input path/to/voice.wav --wavelet db4 --level 4 --threshold 0.02 --snr-db 10 --packet-loss 0.02
+python run_experiment.py \
+  --input path/to/voice.wav \
+  --wavelet db4 \
+  --level 4 \
+  --threshold 0.02 \
+  --snr-db 10 \
+  --packet-loss 0.02
 ```
 
 If `--input` is omitted, a synthetic speech-like test signal is generated.
@@ -51,39 +173,88 @@ If `--input` is omitted, a synthetic speech-like test signal is generated.
 ## Project structure
 
 ```text
-wavelet_voice_project/
+Wavelet-Domain-Robust-Voice-Communication-Lab/
 ├── app.py
 ├── run_experiment.py
 ├── requirements.txt
+├── pytest.ini
 ├── README.md
 ├── src/
 │   ├── audio.py
+│   ├── channel.py
 │   ├── metrics.py
-│   ├── wavelet_codec.py
-│   └── channel.py
+│   └── wavelet_codec.py
 └── tests/
     ├── test_audio.py
     ├── test_channel.py
     └── test_wavelet_codec.py
 ```
 
-## Research workflow
+## Research experiment
 
-1. Start with no noise and no coefficient thresholding.
-2. Compare Haar, db2, db4, db8, sym4, and coif1.
-3. Vary decomposition level.
-4. Vary threshold from 0 to larger values.
-5. Vary channel SNR.
-6. Vary packet-loss probability.
-7. Plot the trade-off between retained coefficients and reconstruction SNR.
+A useful experiment matrix is:
+
+| Parameter | Example values |
+|---|---|
+| Wavelet | haar, db2, db4, db8, sym4, coif1 |
+| DWT level | 1–6 |
+| Threshold | 0.00–0.20 |
+| Shared key | Any non-negative integer |
+| Channel SNR | -5–40 dB |
+| Packet/sample loss | 0–20% |
+
+For every configuration, compare:
+
+- Original vs recovered waveform.
+- Recovered SNR.
+- MSE.
+- Correlation.
+- Retained coefficient percentage.
+- Subjective intelligibility of the scrambled intermediate audio.
 
 ## Interpretation
 
-Wavelet transformation is a reversible signal representation, not encryption. Anyone who knows or estimates the transform can reconstruct the signal. Security is intentionally outside the scope of this prototype.
+The experiment demonstrates three separate ideas:
 
+### 1. Wavelet representation
 
-## Audio input support
+DWT decomposes the speech signal into multi-resolution coefficients. Different wavelets and decomposition levels produce different coefficient structures.
 
-The Streamlit app accepts `.wav`, `.m4a`, `.mp3`, `.flac`, and `.aac`. WAV/FLAC-style files are read directly when possible. M4A/MP3/AAC are decoded through the bundled `imageio-ffmpeg` runtime, then normalized to **16 kHz, mono, float PCM** before DWT processing. The reconstructed result is always available as a standard WAV file.
+### 2. Reversible keyed scrambling
 
-No system-wide FFmpeg installation is required for the supported M4A/MP3 path because `imageio-ffmpeg` supplies an FFmpeg executable.
+The coefficient permutation makes the intermediate representation difficult to recognize as ordinary speech while remaining exactly reversible when the correct key is available.
+
+### 3. Channel robustness
+
+AWGN and packet/sample loss are applied to the scrambled coefficient stream. The receiver then attempts to restore the original coefficient ordering and reconstruct the speech.
+
+A poor channel can therefore reduce recovered audio quality even when the correct key is available.
+
+## Security limitation
+
+The scrambling mechanism in this project should **not** be described as military-grade, secure encryption, or a replacement for cryptography.
+
+The key-driven permutation is useful for demonstrating the signal-processing concept:
+
+```text
+same configuration + correct key
+        → recover
+
+different key / unknown key
+        → coefficient ordering remains incorrect
+```
+
+For a production communication system requiring confidentiality and authentication, use a standard, reviewed authenticated-encryption construction rather than relying on wavelet transforms or coefficient permutations.
+
+## Scope
+
+This repository is intentionally limited to an academic simulation of:
+
+- Digital signal processing.
+- Wavelet-domain representation.
+- Reversible coefficient scrambling.
+- Simulated communication-channel degradation.
+- Receiver-side reconstruction.
+- Quantitative audio-quality evaluation.
+
+It does not implement military radio protocols, tactical communication systems, frequency hopping, anti-interception procedures, or operational deployment.
