@@ -121,12 +121,15 @@ def reconstruct(packet: WaveletPacket) -> np.ndarray:
 # =====================================================================
 # PORTABLE WAV TRANSMISSION
 # =====================================================================
+
 TRANSMISSION_MAGIC = 0.31415927
 TRANSMISSION_VERSION = 2.0
+TRANSMISSION_V3_VERSION = 3.0
 TRANSMISSION_HEADER_SIZE_V1 = 5
 TRANSMISSION_HEADER_SIZE_V2 = 8
 DEFAULT_CARRIER_GAIN = 1e-3
 TRANSMISSION_WAVELETS = ("haar", "db2", "db4", "db8", "sym4", "coif1")
+TRANSMISSION_CHUNK_ID = b"WVTP"
 
 
 def _wavelet_id(wavelet: str) -> int:
@@ -144,39 +147,148 @@ def _wavelet_from_id(value: float) -> str:
     return TRANSMISSION_WAVELETS[idx - 1]
 
 
+def _append_transmission_chunk(wav_bytes: bytes, chunk_payload: bytes) -> bytes:
+    """Append a private RIFF chunk without changing the playable WAV audio."""
+    import struct
+
+    if len(wav_bytes) < 12 or wav_bytes[:4] != b"RIFF" or wav_bytes[8:12] != b"WAVE":
+        raise ValueError("Could not create a valid RIFF/WAV transmission.")
+    padding = b"\x00" if len(chunk_payload) % 2 else b""
+    chunk = TRANSMISSION_CHUNK_ID + struct.pack("<I", len(chunk_payload)) + chunk_payload + padding
+    out = bytearray(wav_bytes)
+    riff_size = struct.unpack_from("<I", out, 4)[0]
+    struct.pack_into("<I", out, 4, riff_size + len(chunk))
+    out.extend(chunk)
+    return bytes(out)
+
+
+def _find_transmission_chunk(wav_bytes: bytes) -> bytes | None:
+    """Find the private WVTP chunk in a RIFF/WAV file."""
+    import struct
+
+    if len(wav_bytes) < 12 or wav_bytes[:4] != b"RIFF" or wav_bytes[8:12] != b"WAVE":
+        return None
+    pos = 12
+    limit = min(len(wav_bytes), 8 + struct.unpack_from("<I", wav_bytes, 4)[0])
+    while pos + 8 <= limit:
+        chunk_id = wav_bytes[pos:pos + 4]
+        size = struct.unpack_from("<I", wav_bytes, pos + 4)[0]
+        start = pos + 8
+        end = start + size
+        if end > len(wav_bytes):
+            return None
+        if chunk_id == TRANSMISSION_CHUNK_ID:
+            return wav_bytes[start:end]
+        pos = end + (size % 2)
+    return None
+
+
 def make_transmission_wav(scrambled_packet: WaveletPacket, scrambled_audio: np.ndarray, sample_rate: int) -> bytes:
-    """Create a self-describing stereo WAV transmission."""
+    """Create a portable mono WAV with a private RIFF recovery payload.
+
+    V3 keeps the spoken transmission as ordinary mono WAV audio. The scrambled
+    coefficient stream is stored in a private RIFF chunk, so media players,
+    Streamlit previews, and normal WAV handling cannot silently drop the
+    recovery payload by downmixing or exposing a second audio channel.
+    """
     import io
+    import struct
     import soundfile as sf
 
     coeffs = np.asarray(scrambled_packet.coeffs[0], dtype=np.float64).reshape(-1)
     peak = float(np.max(np.abs(coeffs))) if coeffs.size else 1.0
     scale = peak if peak > 0 else 1.0
     normalized = (coeffs / scale).astype(np.float32)
-    header = np.array(
-        [TRANSMISSION_MAGIC, TRANSMISSION_VERSION,
-         float(scrambled_packet.original_length), float(coeffs.size),
-         scale, DEFAULT_CARRIER_GAIN, float(scrambled_packet.level),
-         float(_wavelet_id(scrambled_packet.wavelet))],
-        dtype=np.float32,
+
+    # V3 payload is self-describing and does not contain the secret key.
+    header = struct.pack(
+        "<8f",
+        float(TRANSMISSION_MAGIC),
+        float(TRANSMISSION_V3_VERSION),
+        float(scrambled_packet.original_length),
+        float(coeffs.size),
+        float(scale),
+        float(DEFAULT_CARRIER_GAIN),
+        float(scrambled_packet.level),
+        float(_wavelet_id(scrambled_packet.wavelet)),
     )
-    payload = np.concatenate([header, normalized * DEFAULT_CARRIER_GAIN])
+    payload = header + normalized.tobytes(order="C")
+
     audible = np.asarray(scrambled_audio, dtype=np.float32).reshape(-1)
-    frames = max(audible.size, payload.size)
-    stereo = np.zeros((frames, 2), dtype=np.float32)
-    stereo[:audible.size, 0] = np.clip(audible, -1.0, 1.0)
-    stereo[:payload.size, 1] = payload  # metadata must not be clipped; channel 2 is non-audible payload
+    audible = np.clip(audible, -1.0, 1.0)
 
     out = io.BytesIO()
-    sf.write(out, stereo, int(sample_rate), format="WAV", subtype="FLOAT")
-    return out.getvalue()
+    # The WAV itself contains only the playable scrambled voice.
+    sf.write(out, audible, int(sample_rate), format="WAV", subtype="FLOAT")
+    return _append_transmission_chunk(out.getvalue(), payload)
 
 
-def load_transmission_wav(data: bytes, wavelet: str | None = None, level: int | None = None) -> tuple[WaveletPacket, np.ndarray, int]:
-    """Load V2 self-describing WAV; retain V1 compatibility when settings are supplied."""
+def _decode_v3_payload(payload: bytes) -> tuple[WaveletPacket, int]:
+    import struct
+
+    header_bytes = 8 * 4
+    if len(payload) < header_bytes:
+        raise ValueError("Transmission WAV has an incomplete V3 recovery payload.")
+
+    values = struct.unpack("<8f", payload[:header_bytes])
+    magic, version, original_length_f, count_f, scale, gain, level_f, wavelet_id = values
+
+    if not np.isclose(magic, TRANSMISSION_MAGIC, atol=1e-5, rtol=0.0):
+        raise ValueError("This WAV contains an invalid Wavelet Voice Lab transmission payload.")
+    if not np.isclose(version, TRANSMISSION_V3_VERSION, atol=1e-5, rtol=0.0):
+        raise ValueError("Transmission WAV contains an unsupported transmission version.")
+
+    original_length = int(round(original_length_f))
+    count = int(round(count_f))
+    level = int(round(level_f))
+    if original_length <= 0 or count <= 0 or scale <= 0 or gain <= 0:
+        raise ValueError("Transmission WAV contains invalid transmission metadata.")
+
+    expected = header_bytes + count * 4
+    if len(payload) < expected:
+        raise ValueError("Transmission WAV coefficient payload is incomplete.")
+
+    coeffs_normalized = np.frombuffer(
+        payload[header_bytes:expected], dtype="<f4", count=count
+    ).astype(np.float64)
+    coeffs = (coeffs_normalized / gain) * scale
+    wavelet = _wavelet_from_id(wavelet_id)
+
+    layout = decompose(np.zeros(original_length, dtype=np.float64), wavelet, level)
+    if layout.coeffs[0].size != count:
+        raise ValueError("Transmission WAV codec metadata does not match the coefficient payload.")
+
+    return (
+        WaveletPacket(
+            coeffs=[coeffs], slices=layout.slices,
+            original_length=original_length, wavelet=wavelet, level=level,
+        ),
+        original_length,
+    )
+
+
+def load_transmission_wav(
+    data: bytes, wavelet: str | None = None, level: int | None = None
+) -> tuple[WaveletPacket, np.ndarray, int]:
+    """Load V3 mono RIFF transmissions and retain V2/V1 compatibility."""
     import io
     import soundfile as sf
 
+    # First look for V3's private RIFF payload. This works regardless of
+    # whether a WAV has one or two audio channels.
+    chunk = _find_transmission_chunk(data)
+    if chunk is not None:
+        packet, original_length = _decode_v3_payload(chunk)
+        try:
+            audio, sample_rate = sf.read(
+                io.BytesIO(data), always_2d=True, dtype="float64"
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            raise ValueError("The uploaded file is not a readable WAV audio file.") from exc
+        scrambled_audio = np.asarray(audio[:, 0], dtype=np.float64)[:original_length]
+        return packet, scrambled_audio, int(sample_rate)
+
+    # Backward-compatible V2/V1 reader for transmissions created before V3.
     try:
         audio, sample_rate = sf.read(io.BytesIO(data), always_2d=True, dtype="float64")
     except (RuntimeError, ValueError, OSError) as exc:
