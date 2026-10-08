@@ -391,7 +391,6 @@ Wavelet-Domain-Robust-Voice-Communication-Lab/
 │   ├── audio.py               # Loading, decoding, resampling
 │   ├── channel.py             # AWGN + packet loss
 │   ├── metrics.py             # SNR, MSE, correlation
-│   ├── transmission.py        # Portable stereo WAV transmission format
 │   └── wavelet_codec.py       # DWT, thresholding, permutation, IDWT
 └── tests/
     ├── test_audio_formats.py
@@ -406,7 +405,6 @@ Wavelet-Domain-Robust-Voice-Communication-Lab/
 | `wavelet_codec.py` | DWT/IDWT, thresholding, keyed permutation and its inverse |
 | `channel.py` | AWGN at a target SNR, packet/sample loss, seeded for reproducibility |
 | `metrics.py` | SNR, MSE, correlation |
-| `transmission.py` | Creates/validates the receiver-compatible stereo WAV | 
 | `app.py` | Two-mode Streamlit interface and verification dashboard |
 | `run_experiment.py` | End-to-end CLI pipeline |
 
