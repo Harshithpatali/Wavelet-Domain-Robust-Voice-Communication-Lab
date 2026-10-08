@@ -202,6 +202,11 @@ def packet_with_coeffs(packet: WaveletPacket, coeffs: np.ndarray) -> WaveletPack
     )
 
 
+if "sender_key_locked" not in st.session_state:
+    st.session_state.sender_key_locked = False
+if "locked_transmitter_key" not in st.session_state:
+    st.session_state.locked_transmitter_key = None
+
 with st.sidebar:
     st.header("Communication Mode")
     app_mode = st.radio(
@@ -228,25 +233,27 @@ with st.sidebar:
         0.02,
         0.005,
     )
-    st.subheader("Transmitter")
-    transmitter_key = st.number_input(
-        "Transmitter key",
+    st.subheader("Transmitter key")
+    transmitter_key_input = st.number_input(
+        "Choose your secret key",
         min_value=0,
         max_value=2_147_483_647,
         value=2026,
         step=1,
-        help="Key used to scramble the wavelet coefficient order before transmission.",
+        disabled=st.session_state.sender_key_locked,
+        help="Choose this BEFORE uploading audio. Send the same key to the receiver separately.",
     )
-
-    st.subheader("Receiver")
-    receiver_key = st.number_input(
-        "Receiver key",
-        min_value=0,
-        max_value=2_147_483_647,
-        value=2026,
-        step=1,
-        help="Receiver must enter the same key used by the transmitter.",
-    )
+    if not st.session_state.sender_key_locked:
+        if st.button("Set & Lock Key", type="primary", use_container_width=True):
+            st.session_state.locked_transmitter_key = int(transmitter_key_input)
+            st.session_state.sender_key_locked = True
+            st.rerun()
+    else:
+        st.success(f"Key locked: {st.session_state.locked_transmitter_key}")
+        if st.button("Change Key", use_container_width=True):
+            st.session_state.sender_key_locked = False
+            st.session_state.locked_transmitter_key = None
+            st.rerun()
 
     st.divider()
     st.subheader("Simulated Channel")
@@ -261,12 +268,23 @@ with st.sidebar:
     seed = st.number_input("Channel random seed", min_value=0, value=42, step=1)
 
 uploaded = None
-if app_mode == "Transmit & Send":
+if app_mode == "Transmit & Send" and st.session_state.sender_key_locked:
     uploaded = st.file_uploader(
         "Upload a voice recording",
         type=["wav", "m4a", "mp3", "flac", "aac"],
         help="M4A/MP3/AAC are decoded automatically and normalized to 16 kHz mono PCM.",
     )
+
+if app_mode == "Transmit & Send" and not st.session_state.sender_key_locked:
+    st.warning(
+        "Set and lock the transmitter key first. "
+        "Audio upload and scrambling are disabled until a key is locked."
+    )
+    st.info(
+        "Workflow: 1) choose key → 2) lock key → 3) upload audio → "
+        "4) scramble → 5) send the same key separately to the receiver."
+    )
+    st.stop()
 
 if app_mode == "Receive Shared Transmission":
     st.title("Receive Shared Transmission")
@@ -343,10 +361,12 @@ try:
     packet = decompose(original, wavelet, level)
     thresholded_packet, retained = threshold(packet, threshold_fraction)
 
-    # Scramble the flattened wavelet coefficient stream.
+    # Scramble the flattened wavelet coefficient stream using ONLY the
+    # transmitter key that was explicitly locked before upload.
+    transmitter_key = int(st.session_state.locked_transmitter_key)
     scrambled_packet, transmitter_permutation = scramble(
         thresholded_packet,
-        int(transmitter_key),
+        transmitter_key,
     )
     transmission_package = make_transmission_package(
         scrambled_packet,
@@ -382,9 +402,10 @@ try:
     # -------------------------
     # RECEIVER
     # -------------------------
+    receiver_key = int(transmitter_key)
     receiver_permutation = make_permutation(
         received_scrambled_packet.coeffs[0].size,
-        int(receiver_key),
+        receiver_key,
     )
     recovered_coeff_packet = descramble(
         received_scrambled_packet,
@@ -470,21 +491,14 @@ with c4:
         key="download_recovered",
     )
 
-if int(transmitter_key) == int(receiver_key):
-    st.success(
-        f"Transmitter/receiver keys MATCH ({int(transmitter_key)}). "
-        "The receiver can reverse the transmitted coefficient ordering."
-    )
-else:
-    st.error(
-        f"Transmitter/receiver keys DO NOT MATCH "
-        f"({int(transmitter_key)} vs {int(receiver_key)}). "
-        "The receiver is intentionally using the wrong key."
-    )
+st.success(
+    f"Transmitter key locked before upload: {int(transmitter_key)}. "
+    "The receiver must enter this same key to recover the voice."
+)
 
 st.info(
     f"Wavelet={wavelet}, level={level}, threshold={threshold_fraction:.3f}. "
-    "The key itself is never transmitted; the receiver must already know it."
+    "The key itself is never embedded in the transmission package or email."
 )
 
 m1, m2, m3, m4 = st.columns(4)
@@ -603,12 +617,12 @@ if recipient_email and st.button("Send transmission via email", type="primary"):
                 app_url,
                 smtp_sender,
             )
-            st.success(
-                f"Transmission sent to {recipient_email}. "
-                "The key was not included in the email."
-            )
-        except (RuntimeError, OSError, smtplib.SMTPException) as exc:
-            st.error(f"Could not send email: {exc}")
+        st.success(
+            f"Transmission sent to {recipient_email}. "
+            "The receiver must enter the same key separately."
+        )
+    except (RuntimeError, OSError, smtplib.SMTPException) as exc:
+        st.error(f"Could not send email: {exc}")
 
 st.subheader("Waveform comparison")
 preview_len = min(len(original), sr * 2)
@@ -654,8 +668,8 @@ summary = pd.DataFrame(
             "level": level,
             "threshold": threshold_fraction,
             "transmitter_key": int(transmitter_key),
-            "receiver_key": int(receiver_key),
-            "keys_match": int(transmitter_key) == int(receiver_key),
+            "receiver_key": "entered by receiver",
+            "keys_match": "checked during receiver recovery",
             "channel_snr_db": snr,
             "loss_probability": loss,
             "recovered_snr_db": snr_db(original, reconstructed),
