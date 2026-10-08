@@ -576,14 +576,22 @@ def make_transmission_wav(
     peak = float(np.max(np.abs(coeffs))) if coeffs.size else 0.0
     coeff_stream = (coeffs / (peak if peak > 0 else 1.0)).astype(np.float32)
 
-    # Four non-secret header values live only in channel 2:
-    # magic, original signal length, coefficient count, and coefficient scale.
-    # The key is never included.
+    # Five non-secret header values live only in channel 2:
+    # magic, original length, coefficient count, coefficient scale, carrier gain.
+    # The key is never included. The tiny carrier gain keeps the coefficient
+    # channel effectively inaudible when the stereo WAV is played normally.
+    carrier_gain = 1e-3
     header = np.array(
-        [0.31415927, float(scrambled_packet.original_length), float(coeffs.size), float(peak)],
+        [
+            0.31415927,
+            float(scrambled_packet.original_length),
+            float(coeffs.size),
+            float(peak),
+            carrier_gain,
+        ],
         dtype=np.float32,
     )
-    coeff_channel = np.concatenate([header, coeff_stream])
+    coeff_channel = np.concatenate([header, coeff_stream * carrier_gain])
 
     audible = np.asarray(scrambled_audio, dtype=np.float32).reshape(-1)
     frames = max(audible.size, coeff_channel.size)
@@ -615,7 +623,7 @@ def load_transmission_wav(
     scrambled_audio = np.asarray(audio[:, 0], dtype=np.float64)
     coeff_channel = np.asarray(audio[:, 1], dtype=np.float64).reshape(-1)
 
-    if coeff_channel.size < 4:
+    if coeff_channel.size < 5:
         raise ValueError("Transmission WAV is missing its internal transmission header.")
     if not np.isclose(coeff_channel[0], 0.31415927, atol=1e-5):
         raise ValueError(
@@ -625,15 +633,16 @@ def load_transmission_wav(
     original_length = int(round(coeff_channel[1]))
     coefficient_count = int(round(coeff_channel[2]))
     coefficient_scale = float(coeff_channel[3])
+    carrier_gain = float(coeff_channel[4])
     if original_length <= 0 or coefficient_count <= 0:
         raise ValueError("Transmission WAV contains invalid transmission metadata.")
-    if coefficient_scale <= 0:
-        raise ValueError("Transmission WAV contains an invalid coefficient scale.")
+    if coefficient_scale <= 0 or carrier_gain <= 0:
+        raise ValueError("Transmission WAV contains invalid coefficient metadata.")
 
-    end = 4 + coefficient_count
+    end = 5 + coefficient_count
     if end > coeff_channel.size:
         raise ValueError("Transmission WAV coefficient payload is incomplete.")
-    coeffs = coeff_channel[4:end]
+    coeffs = coeff_channel[5:end] / carrier_gain
 
     layout = decompose(
         np.zeros(original_length, dtype=np.float64),
