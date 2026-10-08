@@ -358,7 +358,7 @@ For local development, configure environment variables:
     SENDER_EMAIL=your-email@example.com
     APP_URL=https://your-streamlit-app.streamlit.app
 
-For Streamlit Cloud, put the corresponding values in **App Settings → Secrets** and expose them to the application environment as appropriate for the deployment.
+For Streamlit Cloud, put the values directly in **App Settings → Secrets**. The application reads Streamlit secrets first and falls back to environment variables.
 
 For Gmail, use an **App Password** rather than your normal account password when SMTP authentication requires it.
 
