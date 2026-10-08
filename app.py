@@ -565,6 +565,115 @@ def hero(
 
 
 # =====================================================================
+# UI HELPERS
+# =====================================================================
+def stage_head(number: str, title: str, subtitle: str, accent: str) -> None:
+    """Render a compact numbered section header."""
+    st.markdown(
+        f"""
+        <div class="stage-head">
+          <div class="stage-num" style="color:{accent};border-color:{accent};
+               background:{accent}18;">{number}</div>
+          <div>
+            <div class="stage-title">{title}</div>
+            <div class="stage-sub">{subtitle}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def stage_card(
+    container,
+    number: str,
+    title: str,
+    subtitle: str,
+    accent: str,
+    signal: np.ndarray,
+    sample_rate: int,
+    description: str,
+    download_label: str,
+    download_name: str,
+    download_key: str,
+) -> None:
+    """Render one communication-stage card with playback and download."""
+    with container:
+        with st.container(border=True):
+            stage_head(number, title, subtitle, accent)
+            st.audio(
+                audio_bytes(signal, sample_rate),
+                format="audio/wav",
+            )
+            st.caption(description)
+            st.download_button(
+                download_label,
+                audio_bytes(signal, sample_rate),
+                download_name,
+                "audio/wav",
+                key=download_key,
+                width="stretch",
+            )
+
+
+def pipeline_strip() -> None:
+    """Render the high-level transmitter/channel/receiver pipeline."""
+    st.markdown(
+        """
+        <div class="pipe">
+          <span class="pipe-node tx">VOICE</span>
+          <span class="pipe-arrow">→</span>
+          <span class="pipe-node key">DWT + KEYED SCRAMBLE</span>
+          <span class="pipe-arrow">→</span>
+          <span class="pipe-node ch">WAV TRANSMISSION</span>
+          <span class="pipe-arrow">→</span>
+          <span class="pipe-node rx">KEYED RECOVERY</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def hero(
+    app_mode: str,
+    key_locked: bool,
+    locked_key: int | None,
+    wavelet: str,
+    level: int,
+    snr: float,
+    loss: float,
+) -> None:
+    """Render the application hero/status panel."""
+    mode_label = "TRANSMIT & SEND" if app_mode == "Transmit & Send" else "RECEIVE SHARED TRANSMISSION"
+    key_label = (
+        f"LOCKED · KEY {locked_key}"
+        if key_locked and locked_key is not None
+        else "KEY NOT LOCKED"
+    )
+    key_class = "em" if key_locked else "am"
+
+    st.markdown(
+        f"""
+        <section class="hero">
+          <div class="hero-badge">🛰️ WAVELET VOICE COMMUNICATION LAB</div>
+          <h1>Wavelet-Domain Robust Voice Communication</h1>
+          <p>
+            Keyed wavelet-coefficient scrambling with a playable WAV transmission,
+            simulated channel analysis, and receiver-side recovery.
+          </p>
+          <div class="hero-chips">
+            <span class="chip cy"><b>MODE</b> {mode_label}</span>
+            <span class="chip {key_class}"><b>KEY</b> {key_label}</span>
+            <span class="chip vi"><b>WAVELET</b> {wavelet.upper()} · L{level}</span>
+            <span class="chip am"><b>CHANNEL</b> {snr:.0f} dB · LOSS {loss:.1%}</span>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# =====================================================================
 # HELPERS
 # =====================================================================
 def audio_bytes(signal: np.ndarray, sr: int) -> bytes:
