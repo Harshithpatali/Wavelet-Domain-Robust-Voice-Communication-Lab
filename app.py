@@ -843,16 +843,6 @@ if app_mode == "Receive Shared Transmission":
         st.info("Upload the sender's **voice_transmission.wav** to begin.")
         st.stop()
 
-    uploaded_name = transmission_upload.name
-    normalized_name = uploaded_name.lower().replace(" ", "_")
-    if "received_scrambled" in normalized_name or "channel_received" in normalized_name:
-        st.error(
-            f"Wrong WAV selected: **{uploaded_name}** is a channel/preview audio file, "
-            "not the sender's recovery transmission. In Transmit & Send, download "
-            "**voice_transmission.wav** and upload that exact file here."
-        )
-        st.stop()
-
     try:
         receive_packet, scrambled_receive, receive_sr = load_transmission_wav(
             transmission_upload.getvalue(),
