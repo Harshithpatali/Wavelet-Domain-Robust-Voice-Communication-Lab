@@ -244,13 +244,13 @@ with st.sidebar:
         help="Choose this BEFORE uploading audio. Send the same key to the receiver separately.",
     )
     if not st.session_state.sender_key_locked:
-        if st.button("Set & Lock Key", type="primary", use_container_width=True):
+        if st.button("Set & Lock Key", type="primary", width="stretch"):
             st.session_state.locked_transmitter_key = int(transmitter_key_input)
             st.session_state.sender_key_locked = True
             st.rerun()
     else:
         st.success(f"Key locked: {st.session_state.locked_transmitter_key}")
-        if st.button("Change Key", use_container_width=True):
+        if st.button("Change Key", width="stretch"):
             st.session_state.sender_key_locked = False
             st.session_state.locked_transmitter_key = None
             st.rerun()
@@ -676,7 +676,7 @@ summary = pd.DataFrame(
         }
     ]
 )
-st.dataframe(summary, use_container_width=True)
+st.dataframe(summary, width="stretch")
 
 st.info(
     "Research note: the keyed permutation is reversible signal obfuscation, "
