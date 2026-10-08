@@ -15,7 +15,6 @@ import streamlit as st
 from src.audio import load_audio_bytes, synthetic_voice_like
 from src.channel import add_awgn, packet_loss
 from src.metrics import correlation, mse, snr_db
-from src.transmission import load_transmission_wav, make_transmission_wav
 from src.wavelet_codec import (
     WaveletPacket,
     decompose,
@@ -24,6 +23,8 @@ from src.wavelet_codec import (
     reconstruct,
     scramble,
     threshold,
+    load_transmission_wav,
+    make_transmission_wav,
 )
 
 # =====================================================================
