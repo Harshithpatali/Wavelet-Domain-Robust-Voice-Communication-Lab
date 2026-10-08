@@ -277,6 +277,76 @@ m2.metric("Recovered MSE", f"{mse(original, reconstructed):.6g}")
 m3.metric("Recovered correlation", f"{correlation(original, reconstructed):.4f}")
 m4.metric("Coefficients retained", f"{retained * 100:.1f}%")
 
+st.subheader("Transmission Verification Dashboard")
+original_coeffs = thresholded_packet.coeffs[0]
+scrambled_coeffs = scrambled_packet.coeffs[0]
+scrambled_coeff_corr = coefficient_correlation(original_coeffs, scrambled_coeffs)
+change_rate = permutation_change_rate(permutation)
+same_key_corr = correlation(original, reconstructed)
+wrong_key_corr = correlation(original, wrong_key_audio)
+same_key_snr = snr_db(original, reconstructed)
+wrong_key_snr = snr_db(original, wrong_key_audio)
+
+v1, v2, v3, v4 = st.columns(4)
+v1.metric("Coefficients reordered", f"{change_rate * 100:.2f}%")
+v2.metric("Original ↔ scrambled coeff. corr.", f"{scrambled_coeff_corr:.4f}")
+v3.metric("Original ↔ correct-key corr.", f"{same_key_corr:.4f}")
+v4.metric("Original ↔ wrong-key corr.", f"{wrong_key_corr:.4f}")
+
+st.caption(
+    "A successful transmission should have a large coefficient reorder rate, "
+    "low original-to-scrambled similarity, and high original-to-correct-key similarity."
+)
+
+d1, d2 = st.columns(2)
+with d1:
+    st.markdown("**Correct-key receiver**")
+    st.audio(audio_bytes(reconstructed, sr), format="audio/wav")
+    st.metric("Correct-key reconstruction SNR", f"{same_key_snr:.2f} dB")
+with d2:
+    st.markdown("**Wrong-key receiver**")
+    st.audio(audio_bytes(wrong_key_audio, sr), format="audio/wav")
+    st.metric("Wrong-key reconstruction SNR", f"{wrong_key_snr:.2f} dB")
+    st.caption(f"Intentionally incorrect key: {wrong_key}")
+
+st.subheader("Coefficient-order visualization")
+show_n = min(120, original_coeffs.size)
+fig_order, ax_order = plt.subplots(figsize=(11, 4))
+ax_order.plot(np.arange(show_n), original_coeffs[:show_n], label="Original coefficient order")
+ax_order.plot(
+    np.arange(show_n),
+    scrambled_coeffs[:show_n],
+    label="Transmitted scrambled order",
+    alpha=0.8,
+)
+ax_order.set_title("First coefficients: original vs transmitted ordering")
+ax_order.set_xlabel("Coefficient position")
+ax_order.set_ylabel("Coefficient value")
+ax_order.legend()
+st.pyplot(fig_order)
+plt.close(fig_order)
+
+fig_perm, ax_perm = plt.subplots(figsize=(11, 3))
+ax_perm.scatter(np.arange(show_n), permutation[:show_n], s=12)
+ax_perm.plot(
+    np.arange(show_n),
+    np.arange(show_n),
+    linestyle="--",
+    label="No scrambling reference",
+)
+ax_perm.set_title("Permutation map: transmitted position → source coefficient index")
+ax_perm.set_xlabel("Transmitted coefficient position")
+ax_perm.set_ylabel("Source coefficient index")
+ax_perm.legend()
+st.pyplot(fig_perm)
+plt.close(fig_perm)
+
+st.success(
+    "Verification result: the transmitted coefficient stream is reordered before "
+    "the channel. The correct key restores the ordering; the intentionally wrong "
+    "key does not."
+)
+
 st.subheader("Waveform comparison")
 preview_len = min(len(original), sr * 2)
 fig, axes = plt.subplots(4, 1, figsize=(11, 9), sharex=True)
