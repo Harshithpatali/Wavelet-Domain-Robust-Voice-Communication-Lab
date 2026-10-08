@@ -61,16 +61,17 @@ def permutation_change_rate(permutation: np.ndarray) -> float:
     return float(np.mean(permutation != np.arange(permutation.size)))
 
 
-def wrong_key_reconstruction(
+def reconstruct_with_key(
     scrambled_packet: WaveletPacket,
     key: int,
 ) -> np.ndarray:
-    wrong_permutation = make_permutation(
+    """Receiver reconstruction using only its locally configured key."""
+    receiver_permutation = make_permutation(
         scrambled_packet.coeffs[0].size,
         int(key),
     )
-    wrong_packet = descramble(scrambled_packet, wrong_permutation)
-    return safe_normalize(reconstruct(wrong_packet))
+    recovered_packet = descramble(scrambled_packet, receiver_permutation)
+    return safe_normalize(reconstruct(recovered_packet))
 
 
 def packet_with_coeffs(packet: WaveletPacket, coeffs: np.ndarray) -> WaveletPacket:
@@ -84,7 +85,11 @@ def packet_with_coeffs(packet: WaveletPacket, coeffs: np.ndarray) -> WaveletPack
 
 
 with st.sidebar:
-    st.header("Shared Transmitter / Receiver Configuration")
+    st.header("Communication Configuration")
+    st.caption(
+        "Set the transmitter and receiver keys independently. "
+        "They must match for the receiver to recover the speech."
+    )
     wavelet = st.selectbox(
         "Wavelet",
         ["haar", "db2", "db4", "db8", "sym4", "coif1"],
@@ -98,13 +103,24 @@ with st.sidebar:
         0.02,
         0.005,
     )
-    key = st.number_input(
-        "Shared scrambling key",
+    st.subheader("Transmitter")
+    transmitter_key = st.number_input(
+        "Transmitter key",
         min_value=0,
         max_value=2_147_483_647,
         value=2026,
         step=1,
-        help="Both transmitter and receiver must use the same key.",
+        help="Key used to scramble the wavelet coefficient order before transmission.",
+    )
+
+    st.subheader("Receiver")
+    receiver_key = st.number_input(
+        "Receiver key",
+        min_value=0,
+        max_value=2_147_483_647,
+        value=2026,
+        step=1,
+        help="Receiver must enter the same key used by the transmitter.",
     )
 
     st.divider()
@@ -153,7 +169,10 @@ try:
     thresholded_packet, retained = threshold(packet, threshold_fraction)
 
     # Scramble the flattened wavelet coefficient stream.
-    scrambled_packet, permutation = scramble(thresholded_packet, int(key))
+    scrambled_packet, transmitter_permutation = scramble(
+        thresholded_packet,
+        int(transmitter_key),
+    )
 
     # This is intentionally NOT reconstructed before scrambling is reversed.
     # Reconstructing the original thresholded coefficients here would produce
@@ -182,15 +201,19 @@ try:
     # -------------------------
     # RECEIVER
     # -------------------------
+    receiver_permutation = make_permutation(
+        received_scrambled_packet.coeffs[0].size,
+        int(receiver_key),
+    )
     recovered_coeff_packet = descramble(
         received_scrambled_packet,
-        permutation,
+        receiver_permutation,
     )
     reconstructed = safe_normalize(reconstruct(recovered_coeff_packet))
 
     # Verification receiver: intentionally use a different key.
-    wrong_key = (int(key) + 1) % 2_147_483_648
-    wrong_key_audio = wrong_key_reconstruction(
+    wrong_key = (int(transmitter_key) + 1) % 2_147_483_648
+    wrong_key_audio = reconstruct_with_key(
         received_scrambled_packet,
         wrong_key,
     )
@@ -266,9 +289,21 @@ with c4:
         key="download_recovered",
     )
 
-st.success(
-    f"Receiver configuration: wavelet={wavelet}, level={level}, "
-    f"threshold={threshold_fraction:.3f}, shared key={int(key)}"
+if int(transmitter_key) == int(receiver_key):
+    st.success(
+        f"Transmitter/receiver keys MATCH ({int(transmitter_key)}). "
+        "The receiver can reverse the transmitted coefficient ordering."
+    )
+else:
+    st.error(
+        f"Transmitter/receiver keys DO NOT MATCH "
+        f"({int(transmitter_key)} vs {int(receiver_key)}). "
+        "The receiver is intentionally using the wrong key."
+    )
+
+st.info(
+    f"Wavelet={wavelet}, level={level}, threshold={threshold_fraction:.3f}. "
+    "The key itself is never transmitted; the receiver must already know it."
 )
 
 m1, m2, m3, m4 = st.columns(4)
@@ -281,7 +316,7 @@ st.subheader("Transmission Verification Dashboard")
 original_coeffs = thresholded_packet.coeffs[0]
 scrambled_coeffs = scrambled_packet.coeffs[0]
 scrambled_coeff_corr = coefficient_correlation(original_coeffs, scrambled_coeffs)
-change_rate = permutation_change_rate(permutation)
+change_rate = permutation_change_rate(transmitter_permutation)
 same_key_corr = correlation(original, reconstructed)
 wrong_key_corr = correlation(original, wrong_key_audio)
 same_key_snr = snr_db(original, reconstructed)
@@ -327,7 +362,7 @@ st.pyplot(fig_order)
 plt.close(fig_order)
 
 fig_perm, ax_perm = plt.subplots(figsize=(11, 3))
-ax_perm.scatter(np.arange(show_n), permutation[:show_n], s=12)
+ax_perm.scatter(np.arange(show_n), transmitter_permutation[:show_n], s=12)
 ax_perm.plot(
     np.arange(show_n),
     np.arange(show_n),
@@ -390,7 +425,9 @@ summary = pd.DataFrame(
             "wavelet": wavelet,
             "level": level,
             "threshold": threshold_fraction,
-            "shared_key": int(key),
+            "transmitter_key": int(transmitter_key),
+            "receiver_key": int(receiver_key),
+            "keys_match": int(transmitter_key) == int(receiver_key),
             "channel_snr_db": snr,
             "loss_probability": loss,
             "recovered_snr_db": snr_db(original, reconstructed),
