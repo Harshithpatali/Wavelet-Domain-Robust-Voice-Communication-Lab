@@ -19,7 +19,7 @@ from src.channel import add_awgn, packet_loss
 from src.crypto import decrypt_transmission, encrypt_transmission
 from src.experiment_lab import run_parameter_sweep, simulate_coefficient_channel
 from src.metrics import correlation, mse, optional_stoi, segmental_snr_db, snr_db
-from src.packet import pack_transmission, packetize, unpack_transmission
+from src.packet import pack_transmission, unpack_transmission
 from src.share_store import load_transmission, store_transmission
 from src.wavelet_codec import (
     WaveletPacket,
@@ -1437,7 +1437,7 @@ with tab_research:
             "The receiver validates packet order and integrity before decoding the WAV payload."
         )
         packet_cols = st.columns(3)
-        packet_cols[0].metric("Framed packets", len(packetize(transmission_wav, payload_size=1024)))
+        packet_cols[0].metric("Framed packets", (len(transmission_wav) + 1023) // 1024)
         packet_cols[1].metric("WAV bytes", f"{len(transmission_wav):,}")
         packet_cols[2].metric("Packet-stream bytes", f"{len(packetized_bytes):,}")
         st.download_button(
