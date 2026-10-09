@@ -3,7 +3,7 @@ import pytest
 
 from src.crypto import decrypt_transmission, encrypt_transmission
 from src.experiment_lab import run_parameter_sweep, simulate_coefficient_channel
-from src.fec import encode_xor, transmit_with_xor_fec
+from src.fec import encode_xor, recover_xor_packets, transmit_with_xor_fec
 from src.packet import DataPacket, packetize, reassemble
 
 
@@ -29,28 +29,15 @@ def test_packet_reassembly_rejects_missing_packet():
 def test_xor_fec_recovers_one_lost_packet_per_group():
     raw = bytes((i * 7) % 256 for i in range(8192))
     frame = encode_xor(raw, packet_size=256, group_size=4)
-    # One erased packet in each of two groups, with all parity available.
-    data_packets = list(frame.data_packets)
-    data_packets[1] = None
-    data_packets[6] = None
-    recovered = []
-    for start in range(0, len(data_packets), 4):
-        group = data_packets[start : start + 4]
-        parity = frame.parity_packets[start // 4]
-        missing = [i for i, packet in enumerate(group) if packet is None]
-        if len(missing) == 1:
-            target = missing[0]
-            result = bytearray(parity)
-            for i, packet in enumerate(group):
-                if i != target:
-                    padded = (packet or b"") + b"\x00" * (256 - len(packet or b""))
-                    for j, value in enumerate(padded):
-                        result[j] ^= value
-            index = start + target
-            data_packets[index] = bytes(result[: frame.packet_lengths[index]])
-        recovered.extend(data_packets[start : start + 4])
-    assert b"".join(packet or b"" for packet in recovered) == raw
+    erased_data = [False] * len(frame.data_packets)
+    erased_data[1] = True
+    erased_data[6] = True
+    erased_parity = [False] * len(frame.parity_packets)
 
+    recovered, stats = recover_xor_packets(frame, erased_data, erased_parity)
+    assert recovered == raw
+    assert stats["recovered_packets"] == 2
+    assert stats["unrecovered_packets"] == 0
 
 def test_channel_simulation_is_reproducible_and_preserves_length():
     raw = bytes(range(251)) * 12
