@@ -19,10 +19,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r call_service/requirements.txt
 
       - name: Compile Python files
-        run: python -m compileall -q app.py run_experiment.py src tests
+        run: python -m compileall -q app.py run_experiment.py src tests call_service
 
       - name: Run tests
         run: pytest -q
