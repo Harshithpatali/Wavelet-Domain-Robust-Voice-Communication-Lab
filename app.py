@@ -1078,8 +1078,8 @@ except ValueError as exc:
 # =====================================================================
 # RESULTS
 # =====================================================================
-tab_pipe, tab_verify, tab_signal, tab_report = st.tabs(
-    ["▶  Pipeline", "🔐  Key Verification", "📈  Signal Analysis", "🧾  Report"]
+tab_pipe, tab_verify, tab_signal, tab_report, tab_research = st.tabs(
+    ["▶  Pipeline", "🔐  Key Verification", "📈  Signal Analysis", "🧾  Report", "🧪  Research Lab"]
 )
 
 # ---------------------------------------------------------------- PIPE
@@ -1153,9 +1153,19 @@ with tab_pipe:
 
     st.markdown("#### 🔗 One-click receiver link")
     st.caption(
-        "Create one shareable link that stores this transmission temporarily in Neon. "
-        "When the receiver clicks it, the app opens in Receive mode and loads the WAV automatically."
+        "Create a receiver link with temporary Neon storage, an expiry time, and an optional access limit."
     )
+    access_choice = st.selectbox(
+        "Receiver link access limit",
+        ["One receiver session (one-time)", "Up to 5 receiver sessions", "Up to 20 receiver sessions"],
+        index=1,
+        key="receiver_link_access_choice",
+    )
+    access_limit = {
+        "One receiver session (one-time)": 1,
+        "Up to 5 receiver sessions": 5,
+        "Up to 20 receiver sessions": 20,
+    }[access_choice]
 
     if st.button(
         "🔗 Create receiver link",
@@ -1173,6 +1183,7 @@ with tab_pipe:
                 database_url,
                 transmission_wav,
                 ttl_hours=168,
+                max_downloads=access_limit,
             )
             share_url = (
                 f"{APP_URL}?mode=receive&tx={transmission_id}"
@@ -1190,9 +1201,16 @@ with tab_pipe:
         )
         st.code(share_url)
         st.markdown(f"[🚀 Open receiver link]({share_url})")
+        try:
+            import qrcode
+
+            qr_code = qrcode.make(share_url)
+            st.image(qr_code, width=220, caption="Scan to open the receiver app")
+        except (ImportError, ValueError):
+            st.caption("QR rendering is unavailable in this deployment; the link above still works.")
         st.caption(
-            "Send this link to the receiver. No WAV upload is required on the receiver side. "
-            "Send the secret key separately."
+            f"Access limit: {access_choice}. Send the wavelet key separately. "
+            "The link is a bearer link, so share it only with the intended receiver."
         )
 
 # -------------------------------------------------------------- VERIFY
