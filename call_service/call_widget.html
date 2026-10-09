@@ -63,7 +63,7 @@ function setStatus(text, state="warn") {
 function showError(text) { $("error").textContent = text || ""; }
 function readFingerprint(sdp) {
   if (!sdp) return null;
-  const match = sdp.match(/a=fingerprint:sha-256\\s+([A-F0-9:]+)/i);
+  const match = sdp.match(/a=fingerprint:sha-256\s+([A-F0-9:]+)/i);
   return match ? match[1].toUpperCase() : null;
 }
 async function updateSafetyCode() {
