@@ -40,6 +40,7 @@ audio{display:none}
     <button class="danger" id="leave" disabled>End call</button>
   </div>
   <div class="metrics">
+    <div class="metric" style="grid-column:1/-1"><small>Peer verification code · compare by another channel</small><strong id="safetyCode">Pending connection</strong></div>
     <div class="metric"><small>Connection</small><strong id="connection">Not connected</strong></div>
     <div class="metric"><small>Round-trip estimate</small><strong id="rtt">—</strong></div>
   </div>
@@ -60,6 +61,22 @@ function setStatus(text, state="warn") {
   $("dot").style.color = $("dot").style.background;
 }
 function showError(text) { $("error").textContent = text || ""; }
+function readFingerprint(sdp) {
+  if (!sdp) return null;
+  const match = sdp.match(/a=fingerprint:sha-256\\s+([A-F0-9:]+)/i);
+  return match ? match[1].toUpperCase() : null;
+}
+async function updateSafetyCode() {
+  if (!peer || !peer.localDescription || !peer.remoteDescription) return;
+  const local = readFingerprint(peer.localDescription.sdp);
+  const remote = readFingerprint(peer.remoteDescription.sdp);
+  if (!local || !remote) return;
+  const combined = [local, remote].sort().join("|");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(combined));
+  const shortCode = Array.from(new Uint8Array(digest).slice(0, 4))
+    .map(value => value.toString(16).padStart(2, "0")).join("").toUpperCase();
+  $("safetyCode").textContent = shortCode;
+}
 function signal(message) {
   if (signalSocket && signalSocket.readyState === WebSocket.OPEN) signalSocket.send(JSON.stringify(message));
 }
@@ -113,6 +130,7 @@ async function processSignal(message) {
     pendingIce = [];
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
+    await updateSafetyCode();
     signal({type:"answer", description:peer.localDescription});
     setStatus("Responding to call…");
     return;
@@ -122,6 +140,7 @@ async function processSignal(message) {
     remoteDescriptionSet = true;
     for (const candidate of pendingIce) await peer.addIceCandidate(candidate);
     pendingIce = [];
+    await updateSafetyCode();
     return;
   }
   if (message.type === "ice" && message.candidate && peer) {
@@ -205,6 +224,7 @@ async function endCall(notifyPeer=true) {
   $("leave").disabled = true;
   $("connection").textContent = "Not connected";
   $("rtt").textContent = "—";
+  $("safetyCode").textContent = "Pending connection";
   muted = false;
   $("mute").textContent = "Mute microphone";
   pendingIce = [];
