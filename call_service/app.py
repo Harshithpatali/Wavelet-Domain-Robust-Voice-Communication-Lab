@@ -273,6 +273,7 @@ async def signaling(websocket: WebSocket, room_id: str) -> None:
     await websocket.accept()
     role: str | None = None
     room: Room | None = None
+    registered = False
     client_ip = _client_ip(websocket)
     rate_bucket = AUTH_ATTEMPTS[(client_ip, room_id)]
 
@@ -327,6 +328,7 @@ async def signaling(websocket: WebSocket, room_id: str) -> None:
                 await websocket.close(code=1008)
                 return
             room.participants[role] = websocket
+            registered = True
             other_socket = room.participants.get(other_role)
 
         await websocket.send_json(
@@ -385,7 +387,7 @@ async def signaling(websocket: WebSocket, room_id: str) -> None:
         except Exception:
             pass
     finally:
-        if room is not None and role is not None:
+        if room is not None and role is not None and registered:
             async with room.lock:
                 if room.participants.get(role) is websocket:
                     room.participants.pop(role, None)
