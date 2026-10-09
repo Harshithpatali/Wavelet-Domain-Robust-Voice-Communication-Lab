@@ -146,8 +146,10 @@ if (typeof module === "object" && module.exports) {
       this.inputFill = 0;
       this.outputRing = new Float32Array(BLOCK_SIZE * 4);
       this.readIndex = 0;
-      this.writeIndex = 0;
-      this.outputCount = 0;
+      // An exact one-block delay keeps transformed frames aligned at the output
+      // with the 960-sample processing grid rather than the 128-sample quantum.
+      this.outputCount = BLOCK_SIZE;
+      this.writeIndex = BLOCK_SIZE % this.outputRing.length;
     }
 
     process(inputs, outputs) {
