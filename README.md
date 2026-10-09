@@ -501,7 +501,7 @@ The suite verifies:
 |---|---|---|
 | M4A / MP3 / AAC upload fails | `ffmpeg` missing | Install `ffmpeg` and `libsndfile1` (see [Quick Start](#-quick-start)) |
 | Receiver says the WAV has no recovery payload | The uploaded file is a plain audio preview | Download **voice_transmission.wav**, **voice_transmission.wvp**, or an encrypted **voice_transmission.wve** from the sender |
-| Receiver says the WAV is not a Wavelet Voice Lab transmission | A different stereo WAV was uploaded | Use the WAV exported by this app, not a generic stereo recording |
+| Receiver says the WAV is not a Wavelet Voice Lab transmission | The upload is not an exported transmission or its payload is corrupted | Re-export the .wav/.wvp/.wve package from the sender |
 | Receiver reports a wavelet/DWT mismatch | Receiver settings differ from the sender | Select the same wavelet and DWT level used by the sender |
 | Encrypted .wve package fails | The AES-GCM passphrase is wrong or the package was modified | Verify the separate package passphrase; keep the wavelet key distinct |
 | Packetized .wvp package fails | A packet is missing/corrupted or the stream was truncated | Re-export the .wvp package; CRC and sequence checks reject incomplete streams |
@@ -515,14 +515,14 @@ The suite verifies:
 
 ## ❓ FAQ
 
-**Is this secure?**
-No. It's a teaching tool for reversible obfuscation. See [Security Limitations](#-security-limitations).
+**Is the default scrambling mode secure?**
+No. The keyed permutation is an educational obfuscation method, not encryption. The optional .wve export uses AES-GCM authenticated encryption, but the overall service is still a research prototype. See [Security Limitations](#-security-limitations).
 
 **Why send the key and the WAV separately?**
 If both travel together, the obfuscation provides nothing at all. The WAV contains the scrambled signal and non-secret recovery metadata, while the key is delivered separately.
 
-**Why does the receiver need the same wavelet and level?**
-The inverse transform assumes the same filter bank and band layout used at analysis time. The WAV carries the original length and coefficient count, while the receiver currently selects the same wavelet and DWT level used by the sender.
+**Does the receiver need to select the same wavelet and level?**
+No manual selection is needed for V3 transmissions. The WVTP header carries the wavelet and DWT level, and the receiver builds the correct coefficient layout from that metadata. Older V1/V2 WAVs remain supported through the compatibility reader.
 
 **Why is the scrambled audio so loud and noisy?**
 After permutation, energy that was concentrated in low-frequency bands is spread across the whole spectrum, so the intermediate signal sounds like broadband noise.
