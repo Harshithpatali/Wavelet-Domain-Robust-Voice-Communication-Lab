@@ -21,6 +21,7 @@
 [How It Works](#-how-it-works) ·
 [Usage](#-usage) ·
 [Transmission WAV](#-the-transmission-wav-format) ·
+[V4 Research Lab](#-v4-advanced-research-lab) ·
 [Metrics](#-verification-dashboard) ·
 [Security](#-security-limitations) ·
 [FAQ](#-faq)
@@ -299,17 +300,32 @@ Add your Neon Postgres connection string to the Streamlit app secrets as:
 NEON_DATABASE_URL = "postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require"
 ```
 
-The app creates the `wavelet_transmissions` table automatically on first use. It stores the transmission WAV as PostgreSQL `bytea` plus a random UUID and expiry timestamp; the recovery key is never stored in the database.
+The app creates the `wavelet_transmissions` table automatically and safely adds access-limit columns to an existing table. It stores the WAV bytes, a random UUID, creation/expiry timestamps, and access counters. The recovery key and AES-GCM passphrase are never stored in Neon. Expired rows are cleaned when a new transmission is stored.
 
 ### Receiver Link
 
-The Streamlit app can generate a shareable receiver URL such as:
+A generated link has this shape (the token is unique per transmission):
 
-`https://wavelet-domain-robust-voice-communication-lab.streamlit.app/?mode=receive`
+`https://wavelet-domain-robust-voice-communication-lab.streamlit.app/?mode=receive&tx=<random-token>`
 
-The receiver URL contains only a random transmission ID. When opened, the Streamlit app fetches the shared WAV automatically from the Wavelet Share service and opens **Receive Shared Transmission** mode. The secret key is not included. Shared transmissions expire automatically.
+Opening the link selects **Receive Shared Transmission**, loads the WAV from Neon, and extracts the wavelet name, DWT level, original length, and coefficient count from its `WVTP` metadata. The receiver does not need to choose codec settings. Each link expires after seven days and can be limited to one, five, or twenty receiver sessions. The access counter is incremented on a new session load, not each Streamlit rerun in that session.
+
+The URL token is a bearer link: share it only with the intended recipient. Send the wavelet key separately. The token does not contain that key.
 
 > A plain audio preview such as `received_scrambled.wav` or `channel_received_preview.wav` is not a receiver package because it does not contain the `WVTP` recovery payload.
+
+## 🧪 V4 Advanced Research Lab
+
+The **Research Lab** tab adds optional experiments without replacing the default WAV/Neon workflow:
+
+- **Sequence-numbered packet transport:** download a `.wvp` stream with packet sequence numbers and CRC32 checksums. The receiver checks the stream and rebuilds the WAV before parsing its `WVTP` payload.
+- **Authenticated-encryption comparison:** download an optional `.wve` package protected by AES-256-GCM. Scrypt derives the encryption key from a separate passphrase. The receiver authenticates and decrypts the package before reading the WAV. Share both the wavelet key and package passphrase out of band; they serve different purposes.
+- **Burst-loss channel:** compare independent random packet erasures with a Gilbert–Elliott two-state channel that creates correlated losses.
+- **Forward-error correction:** one XOR parity packet per group of four data packets can recover one erased packet within a group. Multiple losses in the same group may remain unrecoverable. The dashboard reports redundancy and recovery counts.
+- **Automated parameter sweep:** vary wavelet, decomposition level, threshold, SNR, and loss rate. Results include SNR, MSE, correlation, retained coefficients, packet recovery, and redundancy. The interface caps a sweep at 180 combinations and analyzes up to five seconds of audio.
+- **Speech-oriented evaluation:** segmental SNR is included; STOI is displayed when the optional `pystoi` package is installed.
+
+The `.wvp` and `.wve` exports are optional. Existing `voice_transmission.wav` files remain supported. CRC32 is for accidental corruption detection, not cryptographic authentication; AES-GCM authentication applies only to the optional encrypted wrapper.
 
 ## 📊 Verification Dashboard
 
@@ -387,14 +403,16 @@ A useful side effect to notice: because the permutation is applied to the *coeff
 
 ## 🔒 Security Limitations
 
-> **This is not cryptography.**
+> **The default coefficient permutation is not cryptography.**
 
 The keyed permutation is **reversible signal obfuscation**, not encryption. It is:
 
 - ❌ Not resistant to cryptanalysis
-- ❌ Not authenticated (the SHA-256 checksum is an integrity check, not a MAC or signature)
-- ❌ Not a substitute for AES-GCM, ChaCha20-Poly1305, or similar
-- ✅ Useful for teaching why shared configuration + shared key are required
+- ❌ Not cryptographically authenticated
+- ❌ Not a substitute for authenticated encryption
+- ✅ Useful for teaching why shared configuration and a shared key are required
+
+The optional `.wve` wrapper uses AES-256-GCM with Scrypt-derived keys to encrypt and authenticate a package. This is a separate mode and does not turn the default scrambled WAV, Neon bearer link, hosting environment, or surrounding application into an audited secure communications system.
 
 ### Known weaknesses (by design)
 
@@ -414,20 +432,26 @@ For real confidentiality and integrity, use a **standard, reviewed authenticated
 
 ```text
 Wavelet-Domain-Robust-Voice-Communication-Lab/
-├── app.py                     # Streamlit UI (transmit + receive)
+├── app.py                     # Sender/receiver UI and Research Lab
 ├── run_experiment.py          # CLI experiment runner
 ├── requirements.txt
 ├── pytest.ini
 ├── README.md
 ├── src/
 │   ├── audio.py               # Loading, decoding, resampling
-│   ├── channel.py             # AWGN + packet loss
-│   ├── metrics.py             # SNR, MSE, correlation
+│   ├── channel.py             # AWGN, random loss, Gilbert–Elliott loss
+│   ├── crypto.py              # Optional AES-GCM wrapper
+│   ├── experiment_lab.py      # Bounded sweeps and FEC channel experiments
+│   ├── fec.py                 # XOR parity and erasure recovery
+│   ├── metrics.py             # SNR, segmental SNR, MSE, correlation, optional STOI
+│   ├── packet.py              # Sequence-numbered frames, CRC, .wvp pack/reassemble
+│   ├── share_store.py         # Expiring Neon shares and access limits
 │   └── wavelet_codec.py       # DWT, thresholding, permutation, IDWT
 └── tests/
     ├── test_audio_formats.py
     ├── test_channel.py
     ├── test_experiment.py
+    ├── test_v4_upgrades.py
     └── test_wavelet_codec.py
 ```
 
@@ -435,9 +459,14 @@ Wavelet-Domain-Robust-Voice-Communication-Lab/
 |---|---|
 | `audio.py` | File loading, format decoding (via `ffmpeg`/`libsndfile`), resampling |
 | `wavelet_codec.py` | DWT/IDWT, thresholding, keyed permutation and its inverse |
-| `channel.py` | AWGN at a target SNR, packet/sample loss, seeded for reproducibility |
-| `metrics.py` | SNR, MSE, correlation |
-| `app.py` | Two-mode Streamlit interface and verification dashboard |
+| `channel.py` | AWGN, independent losses, and Gilbert–Elliott burst losses |
+| `packet.py` | Sequence numbering, CRC32, packet-stream serialization |
+| `fec.py` | XOR parity packet generation and one-erasure-per-group recovery |
+| `crypto.py` | Optional Scrypt + AES-256-GCM package encryption/authentication |
+| `experiment_lab.py` | Reproducible packet experiments and capped parameter sweeps |
+| `share_store.py` | Expiring Neon shares, per-link access limits, and cleanup |
+| `metrics.py` | SNR, segmental SNR, MSE, correlation, optional STOI |
+| `app.py` | Sender/receiver app, QR links, encrypted uploads, Research Lab |
 | `run_experiment.py` | End-to-end CLI pipeline |
 
 ---
@@ -458,8 +487,11 @@ The suite verifies:
 - ✅ Channel behavior (noise level and packet loss)
 - ✅ Audio format loading
 - ✅ End-to-end experiment run
-- ✅ Portable stereo transmission WAV round-trip
-- ✅ Receiver rejection of mono/non-transmission WAV files
+- ✅ Portable WAV transmission round-trip and rejection of ordinary WAV previews
+- ✅ Sequence and CRC validation for packetized transmission files
+- ✅ XOR FEC behavior and deterministic channel loss simulation
+- ✅ AES-GCM round-trip, wrong-passphrase rejection, and tamper detection
+- ✅ Bounded parameter sweeps and research-channel metrics
 
 ---
 
@@ -468,10 +500,12 @@ The suite verifies:
 | Problem | Likely cause | Fix |
 |---|---|---|
 | M4A / MP3 / AAC upload fails | `ffmpeg` missing | Install `ffmpeg` and `libsndfile1` (see [Quick Start](#-quick-start)) |
-| Receiver says the WAV must be stereo | The uploaded file is the mono scrambled-audio preview | Download **voice_transmission.wav** using the transmitter's **Download transmission WAV** button |
+| Receiver says the WAV has no recovery payload | The uploaded file is a plain audio preview | Download **voice_transmission.wav**, **voice_transmission.wvp**, or an encrypted **voice_transmission.wve** from the sender |
 | Receiver says the WAV is not a Wavelet Voice Lab transmission | A different stereo WAV was uploaded | Use the WAV exported by this app, not a generic stereo recording |
 | Receiver reports a wavelet/DWT mismatch | Receiver settings differ from the sender | Select the same wavelet and DWT level used by the sender |
-| Recovered audio is noise | Wrong key or mismatched codec configuration | Verify the separately shared key and receiver wavelet/level |
+| Encrypted .wve package fails | The AES-GCM passphrase is wrong or the package was modified | Verify the separate package passphrase; keep the wavelet key distinct |
+| Packetized .wvp package fails | A packet is missing/corrupted or the stream was truncated | Re-export the .wvp package; CRC and sequence checks reject incomplete streams |
+| Recovered audio is noise | Wrong key or damaged payload | Verify the separately shared key; V3 codec settings are read from the WAV metadata |
 | Recovery is poor even with the right key | Channel too harsh in the experiment | Raise SNR or lower packet-loss; try a different wavelet or level |
 | `streamlit: command not found` | Virtual environment not activated | Activate `.venv` and reinstall requirements |
 | PowerShell blocks activation script | Execution policy | `Set-ExecutionPolicy -Scope Process RemoteSigned` |
@@ -530,18 +564,23 @@ By working through this lab, you will be able to:
 
 ## 🗺️ Roadmap
 
-Ideas for future work (contributions welcome):
+Completed in the V4 research branch:
 
-- [ ] Coefficient quantization and entropy coding for a more realistic bit-rate study
-- [ ] Forward error correction (e.g., Reed–Solomon) to show error-resilient coding
-- [ ] Burst-loss channel model (Gilbert–Elliott)
-- [ ] Perceptual metrics (PESQ / STOI) alongside SNR and MSE
+- [x] Self-describing receiver metadata and one-click receive mode
+- [x] Sequence-numbered packet transport with CRC32 checksums
+- [x] XOR parity FEC and Gilbert–Elliott burst-loss experiments
+- [x] Segmental SNR and optional STOI
+- [x] AES-GCM comparison mode for exported packages
+- [x] Bounded experiment sweeps with CSV export
+- [x] QR receiver links and expiring/access-limited Neon shares
+
+Potential future research directions:
+
+- [ ] Stronger block FEC (Reed–Solomon or LDPC) and interleaving across burst losses
+- [ ] Optional PESQ/POLQA evaluation where access and licensing permit
 - [ ] Band-wise permutation vs. global permutation comparison
-- [ ] Optional authenticated-encryption wrapper for the transmission payload, to contrast with obfuscation
-- [ ] Batch experiment runner with automatic sweep plots
-- [ ] Docker image for one-command setup
-
----
+- [ ] Live streaming with bounded chunk buffering and sequence-aware replay
+- [ ] Benchmark sweeps across larger datasets using a separate worker process
 
 ## 🤝 Contributing
 
