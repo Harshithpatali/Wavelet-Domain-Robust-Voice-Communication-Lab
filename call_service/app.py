@@ -199,7 +199,6 @@ def ice_configuration() -> dict[str, list[dict[str, Any]]]:
 @app.post("/api/rooms")
 def create_room(
     body: CreateRoomRequest,
-    request: Request,
     x_call_creation_token: str | None = Header(default=None),
 ) -> JSONResponse:
     """Create an expiring two-person room and return its access code once."""
@@ -275,8 +274,6 @@ async def signaling(websocket: WebSocket, room_id: str) -> None:
     room: Room | None = None
     registered = False
     client_ip = _client_ip(websocket)
-    rate_bucket = AUTH_ATTEMPTS[(client_ip, room_id)]
-
     try:
         try:
             auth_text = await asyncio.wait_for(websocket.receive_text(), timeout=10)
@@ -295,11 +292,6 @@ async def signaling(websocket: WebSocket, room_id: str) -> None:
             await websocket.close(code=1008)
             return
 
-        if not _check_rate_limit(rate_bucket, MAX_AUTH_ATTEMPTS_PER_MINUTE, 60):
-            await websocket.send_json({"type": "error", "message": "Too many attempts. Wait one minute and try again."})
-            await websocket.close(code=1008)
-            return
-
         _prune_expired_rooms()
         room = _load_room(room_id)
         role_value = auth.get("role")
@@ -308,13 +300,19 @@ async def signaling(websocket: WebSocket, room_id: str) -> None:
             await websocket.send_json({"type": "error", "message": "This call invitation has expired or does not exist."})
             await websocket.close(code=1008)
             return
+
+        rate_bucket = AUTH_ATTEMPTS[(client_ip, room_id)]
+        if not _check_rate_limit(rate_bucket, MAX_AUTH_ATTEMPTS_PER_MINUTE, 60):
+            await websocket.send_json({"type": "error", "message": "Too many attempts. Wait one minute and try again."})
+            await websocket.close(code=1008)
+            return
         if role_value not in {"host", "guest"}:
             await websocket.send_json({"type": "error", "message": "Invalid caller role."})
             await websocket.close(code=1008)
             return
         if not isinstance(access_code, str) or len(access_code) > 64:
             access_code = ""
-        candidate_hash = _hash_code(access_code, room.salt)
+        candidate_hash = await asyncio.to_thread(_hash_code, access_code, room.salt)
         if not secrets.compare_digest(candidate_hash, room.code_hash):
             await websocket.send_json({"type": "error", "message": "The access code is incorrect."})
             await websocket.close(code=1008)
