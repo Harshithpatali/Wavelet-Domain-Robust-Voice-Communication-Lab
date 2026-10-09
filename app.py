@@ -1199,11 +1199,18 @@ with tab_pipe:
             )
             st.session_state["receiver_share_url"] = share_url
             st.session_state["receiver_share_expiry"] = 168
+            st.session_state["receiver_share_signature"] = hashlib.sha256(
+                transmission_wav
+            ).hexdigest()
+            st.session_state["receiver_share_access_limit"] = access_limit
         except Exception as exc:
             st.error(f"Could not create receiver link: {exc}")
 
-    if st.session_state.get("receiver_share_url"):
-        share_url = st.session_state["receiver_share_url"]
+    current_share_signature = hashlib.sha256(transmission_wav).hexdigest()
+    share_url = st.session_state.get("receiver_share_url")
+    share_signature = st.session_state.get("receiver_share_signature")
+    saved_access_limit = st.session_state.get("receiver_share_access_limit")
+    if share_url and share_signature == current_share_signature and saved_access_limit == access_limit:
         expiry_hours = st.session_state.get("receiver_share_expiry", 168)
         st.success(
             f"Receiver link ready. The transmission expires after about {expiry_hours} hours."
@@ -1220,6 +1227,11 @@ with tab_pipe:
         st.caption(
             f"Access limit: {access_choice}. Send the wavelet key separately. "
             "The link is a bearer link, so share it only with the intended receiver."
+        )
+    elif share_url:
+        st.info(
+            "The current transmission or access limit changed. Create a new receiver link "
+            "before sharing this version."
         )
 
 # -------------------------------------------------------------- VERIFY
