@@ -62,6 +62,81 @@ def encode_xor(data: bytes, packet_size: int = 1024, group_size: int = 4) -> XOR
     )
 
 
+def recover_xor_packets(
+    frame: XORFrame,
+    erased_data: list[bool] | tuple[bool, ...],
+    erased_parity: list[bool] | tuple[bool, ...],
+    *,
+    use_fec: bool = True,
+) -> tuple[bytes, dict[str, int | float | bool]]:
+    """Recover payload bytes from erasure masks, enabling deterministic tests."""
+    if len(erased_data) != len(frame.data_packets):
+        raise ValueError("Data erasure mask length does not match packet count")
+    if len(erased_parity) != len(frame.parity_packets):
+        raise ValueError("Parity erasure mask length does not match packet count")
+
+    received: list[bytes | None] = [
+        None if missing else payload
+        for payload, missing in zip(frame.data_packets, erased_data)
+    ]
+    parity_received: list[bytes | None] = [
+        None if missing else payload
+        for payload, missing in zip(frame.parity_packets, erased_parity)
+    ] if use_fec else [None] * len(frame.parity_packets)
+
+    recovered_count = 0
+    group_count = 0
+    for group_index, start in enumerate(range(0, len(received), frame.group_size)):
+        group_count += 1
+        end = min(start + frame.group_size, len(received))
+        missing_indexes = [idx for idx in range(start, end) if received[idx] is None]
+        if (
+            use_fec
+            and len(missing_indexes) == 1
+            and group_index < len(parity_received)
+            and parity_received[group_index] is not None
+        ):
+            target = missing_indexes[0]
+            restored = bytearray(parity_received[group_index] or b"")
+            for idx in range(start, end):
+                if idx == target:
+                    continue
+                known = received[idx]
+                if known is None:
+                    break
+                padded = _padded(known, frame.packet_size)
+                for byte_index, value in enumerate(padded):
+                    restored[byte_index] ^= value
+            else:
+                received[target] = bytes(restored[: frame.packet_lengths[target]])
+                recovered_count += 1
+
+    lost_count = sum(bool(value) for value in erased_data)
+    unrecovered_count = sum(payload is None for payload in received)
+    safe_packets = [
+        payload if payload is not None else (b"\x00" * length)
+        for payload, length in zip(received, frame.packet_lengths)
+    ]
+    output = b"".join(safe_packets)[: frame.original_length]
+    stats: dict[str, int | float | bool] = {
+        "data_packets": len(frame.data_packets),
+        "parity_packets": len(frame.parity_packets) if use_fec else 0,
+        "lost_data_packets": int(lost_count),
+        "recovered_packets": int(recovered_count),
+        "unrecovered_packets": int(unrecovered_count),
+        "total_groups": int(group_count),
+        "fec_enabled": bool(use_fec),
+        "redundancy_percent": (
+            100.0 * len(frame.parity_packets) / len(frame.data_packets)
+            if use_fec else 0.0
+        ),
+        "data_recovery_rate": (
+            1.0 if lost_count == 0 else float(recovered_count / lost_count)
+        ),
+    }
+    return output, stats
+
+
 def _loss_mask(
     count: int,
     loss_probability: float,
@@ -106,72 +181,17 @@ def transmit_with_xor_fec(
     parity_count = len(frame.parity_packets) if use_fec else 0
     mask = _loss_mask(
         len(frame.data_packets) + parity_count,
-        loss_probability,
+        float(loss_probability),
         rng,
         burst,
     )
-    data_missing = mask[: len(frame.data_packets)].tolist()
-    parity_missing = (
-        mask[len(frame.data_packets) :].tolist() if use_fec else []
+    erased_data = mask[: len(frame.data_packets)].tolist()
+    if use_fec:
+        erased_parity = mask[len(frame.data_packets) :].tolist()
+    else:
+        erased_parity = [True] * len(frame.parity_packets)
+    output, stats = recover_xor_packets(
+        frame, erased_data, erased_parity, use_fec=use_fec
     )
-    received: list[bytes | None] = [
-        None if missing else payload
-        for payload, missing in zip(frame.data_packets, data_missing)
-    ]
-    parity_received: list[bytes | None] = [
-        None if missing else payload
-        for payload, missing in zip(frame.parity_packets, parity_missing)
-    ] if use_fec else []
-
-    recovered_count = 0
-    group_count = 0
-    for group_index, start in enumerate(range(0, len(received), frame.group_size)):
-        group_count += 1
-        end = min(start + frame.group_size, len(received))
-        missing_indexes = [idx for idx in range(start, end) if received[idx] is None]
-        if (
-            use_fec
-            and len(missing_indexes) == 1
-            and group_index < len(parity_received)
-            and parity_received[group_index] is not None
-        ):
-            target = missing_indexes[0]
-            restored = bytearray(parity_received[group_index] or b"")
-            for idx in range(start, end):
-                if idx == target:
-                    continue
-                known = received[idx]
-                if known is None:
-                    break
-                padded = _padded(known, frame.packet_size)
-                for byte_index, value in enumerate(padded):
-                    restored[byte_index] ^= value
-            else:
-                received[target] = bytes(restored[: frame.packet_lengths[target]])
-                recovered_count += 1
-
-    unrecovered_count = sum(payload is None for payload in received)
-    safe_packets = [
-        payload if payload is not None else (b"\x00" * length)
-        for payload, length in zip(received, frame.packet_lengths)
-    ]
-    output = b"".join(safe_packets)[: frame.original_length]
-    lost_count = sum(data_missing)
-    stats: dict[str, int | float | bool] = {
-        "data_packets": len(frame.data_packets),
-        "parity_packets": len(frame.parity_packets) if use_fec else 0,
-        "lost_data_packets": int(lost_count),
-        "recovered_packets": int(recovered_count),
-        "unrecovered_packets": int(unrecovered_count),
-        "total_groups": int(group_count),
-        "fec_enabled": bool(use_fec),
-        "burst_channel": bool(burst),
-        "redundancy_percent": (
-            100.0 * len(frame.parity_packets) / len(frame.data_packets)
-            if use_fec else 0.0
-        ),
-        "data_recovery_rate": (
-            1.0 if lost_count == 0 else float(recovered_count / lost_count)
-        ),
-    }
+    stats["burst_channel"] = bool(burst)
     return output, stats
