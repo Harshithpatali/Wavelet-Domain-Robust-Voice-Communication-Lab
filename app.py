@@ -19,7 +19,7 @@ from src.channel import add_awgn, packet_loss
 from src.crypto import decrypt_transmission, encrypt_transmission
 from src.experiment_lab import run_parameter_sweep, simulate_coefficient_channel
 from src.metrics import correlation, mse, optional_stoi, segmental_snr_db, snr_db
-from src.packet import pack_transmission, unpack_transmission
+from src.packet import pack_transmission, packetize, unpack_transmission
 from src.share_store import load_transmission, store_transmission
 from src.wavelet_codec import (
     WaveletPacket,
@@ -59,6 +59,9 @@ receiver_query_mode = str(st.query_params.get("mode", "")).lower()
 shared_transmission_id = str(st.query_params.get("tx", "")).strip()
 receiver_link = f"{APP_URL}?mode=receive"
 initial_mode_index = 1 if receiver_query_mode in {"receive", "receiver"} else 0
+if receiver_query_mode in {"receive", "receiver"} and not st.session_state.get("_receiver_query_mode_applied"):
+    st.session_state["app_mode_selector"] = "Receive Shared Transmission"
+    st.session_state["_receiver_query_mode_applied"] = True
 
 
 # =====================================================================
@@ -771,6 +774,7 @@ with st.sidebar:
         "Mode",
         ["Transmit & Send", "Receive Shared Transmission"],
         index=initial_mode_index,
+        key="app_mode_selector",
         label_visibility="collapsed",
     )
 
