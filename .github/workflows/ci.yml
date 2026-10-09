@@ -26,3 +26,6 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      - name: Build private-call Docker image
+        run: docker build --file call_service/Dockerfile --tag wavelet-private-call-signaling:test .
