@@ -26,6 +26,12 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .note{color:#8ea3c0;font-size:11px;line-height:1.5;margin-top:15px}
 #error{color:#fda4af;font-size:12px;white-space:pre-wrap;margin-top:12px}
 audio{display:none}
+.wavelet-settings{border:1px solid #1e2a44;background:#0a1322;border-radius:13px;padding:13px;margin:15px 0}
+.wavelet-toggle{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:650;cursor:pointer}
+.wavelet-toggle input{width:17px;height:17px;accent-color:#22d3ee}
+.wavelet-label{display:block;color:#8ea3c0;font-size:11px;text-transform:uppercase;letter-spacing:.1em;margin:11px 0 6px}
+#waveletKey{width:100%;border:1px solid #2b3b58;background:#070b14;color:#e6edf7;border-radius:10px;padding:12px;font-size:14px}
+.wavelet-note{font-size:11px;line-height:1.55;color:#8ea3c0;margin-top:10px}
 </style>
 </head>
 <body>
@@ -33,6 +39,12 @@ audio{display:none}
   <div class="kicker">Private live call · audio only</div>
   <h2>Encrypted voice session</h2>
   <div class="desc">Your browser captures microphone audio and negotiates a direct WebRTC connection. This signaling service relays setup messages only; it does not receive the audio stream.</div>
+  <div class="wavelet-settings">
+    <label class="wavelet-toggle"><input type="checkbox" id="waveletEnabled" checked> Enable live wavelet transform + keyed scrambling</label>
+    <label class="wavelet-label" for="waveletKey">Shared wavelet code (separate from the room access code)</label>
+    <input id="waveletKey" type="password" autocomplete="off" minlength="8" maxlength="256" placeholder="Enter the same private code on both devices">
+    <div class="wavelet-note">The code is used locally by the browser audio processor and is not sent to the signaling server. Both callers must enter it exactly. This experimental DSP permutation is not cryptographic encryption; WebRTC still encrypts media in transit. Codec loss or block misalignment can reduce recovery quality.</div>
+  </div>
   <div class="status" role="status" aria-live="polite"><span class="dot" id="dot"></span><span class="status-text" id="status">Ready to connect</span></div>
   <div class="controls">
     <button class="primary" id="connect">Join call</button>
@@ -51,7 +63,10 @@ audio{display:none}
 <script>
 const CALL_CONFIG = __CALL_CONFIG__;
 const $ = (id) => document.getElementById(id);
-let localStream = null, peer = null, signalSocket = null, role = CALL_CONFIG.role;
+let localStream = null, outgoingStream = null, peer = null, signalSocket = null, role = CALL_CONFIG.role;
+let processingContext = null, waveletModuleLoaded = false;
+let waveletEnabled = true, waveletKey = "";
+let processingNodes = [];
 let muted = false, offerStarted = false, closedByUser = false, remoteDescriptionSet = false;
 let pendingIce = [], statsTimer = null;
 
@@ -80,22 +95,100 @@ async function updateSafetyCode() {
 function signal(message) {
   if (signalSocket && signalSocket.readyState === WebSocket.OPEN) signalSocket.send(JSON.stringify(message));
 }
+
+async function ensureWaveletProcessor() {
+  if (!waveletEnabled) return;
+  if (!CALL_CONFIG.waveletWorkletSource) {
+    throw new Error("The live wavelet processor is missing. Refresh the app or check the deployment.");
+  }
+  if (!processingContext || processingContext.state === "closed") {
+    processingContext = new AudioContext({sampleRate:48000, latencyHint:"interactive"});
+    if (processingContext.sampleRate !== 48000) {
+      await processingContext.close();
+      processingContext = null;
+      throw new Error("This browser audio device could not provide 48 kHz processing required by the current 20 ms wavelet frame prototype.");
+    }
+    waveletModuleLoaded = false;
+  }
+  await processingContext.resume();
+  if (!waveletModuleLoaded) {
+    const sourceBlob = new Blob([CALL_CONFIG.waveletWorkletSource], {type:"text/javascript"});
+    const sourceUrl = URL.createObjectURL(sourceBlob);
+    try {
+      await processingContext.audioWorklet.addModule(sourceUrl);
+      waveletModuleLoaded = true;
+    } finally {
+      URL.revokeObjectURL(sourceUrl);
+    }
+  }
+}
+
+function makeWaveletNode(mode) {
+  return new AudioWorkletNode(processingContext, "wavelet-block-processor", {
+    numberOfInputs:1,
+    numberOfOutputs:1,
+    outputChannelCount:[1],
+    channelCount:1,
+    channelCountMode:"explicit",
+    channelInterpretation:"discrete",
+    processorOptions:{mode, key:waveletKey}
+  });
+}
+
+async function buildOutgoingStream(stream) {
+  if (!waveletEnabled) return stream;
+  await ensureWaveletProcessor();
+  const source = processingContext.createMediaStreamSource(stream);
+  const processor = makeWaveletNode("scramble");
+  const destination = processingContext.createMediaStreamDestination();
+  source.connect(processor);
+  processor.connect(destination);
+  processingNodes.push(source, processor, destination);
+  return destination.stream;
+}
+
+async function playIncomingStream(stream) {
+  if (!waveletEnabled) {
+    $("remoteAudio").srcObject = stream;
+  } else {
+    await ensureWaveletProcessor();
+    const source = processingContext.createMediaStreamSource(stream);
+    const processor = makeWaveletNode("recover");
+    const destination = processingContext.createMediaStreamDestination();
+    source.connect(processor);
+    processor.connect(destination);
+    processingNodes.push(source, processor, destination);
+    $("remoteAudio").srcObject = destination.stream;
+  }
+  try { await $("remoteAudio").play(); }
+  catch (_) { setStatus("Connected. Tap the page if audio playback is blocked.", "ok"); }
+}
+
 async function makePeer() {
   const response = await fetch(CALL_CONFIG.signalUrl + "/api/ice", {cache:"no-store"});
   if (!response.ok) throw new Error("Could not load ICE server settings.");
   const iceConfig = await response.json();
   peer = new RTCPeerConnection({iceServers: iceConfig.iceServers || [{urls:"stun:stun.l.google.com:19302"}]});
-  for (const track of localStream.getTracks()) peer.addTrack(track, localStream);
+  for (const track of outgoingStream.getTracks()) peer.addTrack(track, outgoingStream);
   peer.ontrack = async (event) => {
-    $("remoteAudio").srcObject = event.streams[0];
-    try { await $("remoteAudio").play(); }
-    catch (_) { setStatus("Connected. Tap the page if audio playback is blocked.", "ok"); }
+    try {
+      const remoteStream = event.streams[0] || new MediaStream([event.track]);
+      await playIncomingStream(remoteStream);
+    } catch (error) {
+      showError(error.message || "Could not initialize live wavelet recovery.");
+      setStatus("Audio recovery failed", "bad");
+    }
   };
   peer.onicecandidate = (event) => { if (event.candidate) signal({type:"ice", candidate:event.candidate}); };
   peer.onconnectionstatechange = () => {
     const state = peer ? peer.connectionState : "closed";
     $("connection").textContent = state;
-    if (state === "connected") setStatus("Call connected — encrypted media active", "ok");
+    if (state === "connected") setStatus(
+      waveletEnabled
+        ? "Call connected — live wavelet recovery active + WebRTC media encryption"
+        : "Call connected — WebRTC media encryption active",
+      "ok"
+    );
     else if (state === "failed") setStatus("Connection failed. Network may require TURN.", "bad");
     else if (state === "disconnected") setStatus("Connection interrupted; trying to recover…");
     else if (state === "closed") setStatus("Call ended");
@@ -170,14 +263,22 @@ async function connectCall() {
   showError("");
   closedByUser = false;
   try {
+    waveletEnabled = $("waveletEnabled").checked;
+    waveletKey = $("waveletKey").value;
+    if (waveletEnabled && waveletKey.trim().length < 8) {
+      throw new Error("Enter the shared wavelet code (at least 8 characters), or turn off the experimental wavelet layer.");
+    }
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error("Microphone access requires a supported browser on HTTPS. Open the secure Streamlit link directly.");
     }
-    setStatus("Requesting microphone permission…");
+    $("waveletEnabled").disabled = true;
+    $("waveletKey").disabled = true;
+    setStatus(waveletEnabled ? "Preparing live wavelet processor…" : "Preparing encrypted voice call…");
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: {echoCancellation:true, noiseSuppression:true, autoGainControl:true},
       video:false
     });
+    outgoingStream = await buildOutgoingStream(localStream);
     await makePeer();
     const wsUrl = CALL_CONFIG.signalUrl.replace(/^http/i, "ws") + "/ws/" + encodeURIComponent(CALL_CONFIG.roomId);
     signalSocket = new WebSocket(wsUrl);
@@ -210,7 +311,13 @@ async function connectCall() {
     showError(error.message || "Could not start the call.");
     setStatus("Microphone or network setup failed", "bad");
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    if (outgoingStream) { outgoingStream.getTracks().forEach(t => t.stop()); }
+    outgoingStream = null;
     if (peer) { peer.close(); peer = null; }
+    if (processingContext) { await processingContext.close().catch(() => {}); processingContext = null; }
+    waveletModuleLoaded = false; processingNodes = [];
+    $("waveletEnabled").disabled = false;
+    $("waveletKey").disabled = false;
     $("connect").disabled = false;
   }
 }
@@ -221,6 +328,12 @@ async function endCall(notifyPeer=true) {
   if (signalSocket) { signalSocket.close(); signalSocket = null; }
   if (peer) { peer.close(); peer = null; }
   if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  if (outgoingStream) { outgoingStream.getTracks().forEach(t => t.stop()); }
+  outgoingStream = null;
+  if (processingContext) { await processingContext.close().catch(() => {}); processingContext = null; }
+  waveletModuleLoaded = false; processingNodes = [];
+  $("waveletEnabled").disabled = false;
+  $("waveletKey").disabled = false;
   $("remoteAudio").srcObject = null;
   $("connect").disabled = false;
   $("mute").disabled = true;
