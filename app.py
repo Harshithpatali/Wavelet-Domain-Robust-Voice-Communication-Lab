@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 
@@ -18,6 +19,7 @@ from src.channel import add_awgn, packet_loss
 from src.crypto import decrypt_transmission, encrypt_transmission
 from src.experiment_lab import run_parameter_sweep, simulate_coefficient_channel
 from src.metrics import correlation, mse, optional_stoi, segmental_snr_db, snr_db
+from src.packet import pack_transmission, unpack_transmission
 from src.share_store import load_transmission, store_transmission
 from src.wavelet_codec import (
     WaveletPacket,
@@ -865,9 +867,9 @@ if app_mode == "Receive Shared Transmission":
                 )
                 transmission_upload = st.file_uploader(
                     "Upload the scrambled transmission WAV",
-                    type=["wav", "wve"],
+                    type=["wav", "wve", "wvp"],
                     label_visibility="collapsed",
-                    help="Upload voice_transmission.wav or an optional AES-GCM protected .wve package.",
+                    help="Upload .wav, a packetized .wvp stream, or an AES-GCM protected .wve package.",
                 )
 
     with c_key:
@@ -913,6 +915,9 @@ if app_mode == "Receive Shared Transmission":
             else:
                 transmission_bytes = uploaded_bytes
                 transmission_source = transmission_upload.name
+            if transmission_upload.name.lower().endswith(".wvp"):
+                transmission_bytes = unpack_transmission(transmission_bytes)
+                transmission_source += " (packet sequence and checksums validated)"
 
         receive_packet, scrambled_receive, receive_sr = load_transmission_wav(
             transmission_bytes,
@@ -1421,6 +1426,26 @@ with tab_research:
     )
 
     with st.container(border=True):
+        st.markdown("##### Sequence-numbered packet stream")
+        packetized_bytes = pack_transmission(transmission_wav, payload_size=1024)
+        st.caption(
+            "The optional .wvp export wraps the WAV in sequence-numbered packets with CRC32 checksums. "
+            "The receiver validates packet order and integrity before decoding the WAV payload."
+        )
+        packet_cols = st.columns(3)
+        packet_cols[0].metric("Framed packets", len(packetize(transmission_wav, payload_size=1024)))
+        packet_cols[1].metric("WAV bytes", f"{len(transmission_wav):,}")
+        packet_cols[2].metric("Packet-stream bytes", f"{len(packetized_bytes):,}")
+        st.download_button(
+            "Download packetized .wvp stream",
+            data=packetized_bytes,
+            file_name="voice_transmission.wvp",
+            mime="application/octet-stream",
+            key="download_packetized_transmission",
+            width="stretch",
+        )
+
+    with st.container(border=True):
         st.markdown("##### Authenticated-encryption comparison")
         st.write(
             "The optional .wve wrapper uses Scrypt-based key derivation and AES-256-GCM. "
@@ -1440,14 +1465,16 @@ with tab_research:
             try:
                 encrypted_bytes = encrypt_transmission(transmission_wav, crypto_passphrase)
                 st.session_state["encrypted_transmission_package"] = encrypted_bytes
-                st.session_state["encrypted_transmission_signature"] = (
-                    source_name, len(transmission_wav), wavelet, level
-                )
+                st.session_state["encrypted_transmission_signature"] = hashlib.sha256(
+                    transmission_wav
+                ).hexdigest()
                 st.success("Encrypted package created. Its secret passphrase is not stored in the package.")
             except ValueError as exc:
                 st.error(str(exc))
         encrypted_package = st.session_state.get("encrypted_transmission_package")
-        if encrypted_package:
+        current_transmission_signature = hashlib.sha256(transmission_wav).hexdigest()
+        encrypted_signature = st.session_state.get("encrypted_transmission_signature")
+        if encrypted_package and encrypted_signature == current_transmission_signature:
             st.download_button(
                 "Download AES-GCM protected .wve",
                 data=encrypted_package,
@@ -1460,6 +1487,8 @@ with tab_research:
                 "Receiver workflow: upload the .wve file, enter this AES-GCM passphrase, "
                 "then enter the original wavelet key. The app rejects wrong passphrases and tampering."
             )
+        elif encrypted_package:
+            st.info("The source transmission changed. Create a fresh encrypted package before downloading.")
         st.warning(
             "This adds standard authenticated encryption as a comparison mode; it does not make "
             "the entire web application or sharing service a formally audited secure communications product."
