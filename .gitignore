@@ -7,3 +7,9 @@ __pycache__/
 venv/
 env/
 ENV/
+
+# Local secrets and service configuration
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml

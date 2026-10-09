@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#070b14;color:#e6edf7}
+.panel{border:1px solid #1e2a44;border-radius:20px;padding:20px;background:linear-gradient(145deg,#101a2e,#0a1020);box-shadow:0 20px 60px #0003}
+.kicker{font:600 11px ui-monospace,monospace;letter-spacing:.18em;color:#22d3ee;text-transform:uppercase}
+h2{font-size:22px;margin:8px 0}
+.desc{font-size:13px;color:#8ea3c0;line-height:1.6}
+.status{display:flex;align-items:center;gap:9px;padding:12px;border:1px solid #263753;border-radius:12px;background:#0a1322;margin:18px 0}
+.dot{width:8px;height:8px;border-radius:50%;background:#fbbf24;box-shadow:0 0 12px currentColor}
+.status-text{font-size:13px;color:#d6e3f6}
+.controls{display:flex;gap:10px;flex-wrap:wrap}
+button{cursor:pointer;border:1px solid #2b3b58;border-radius:12px;padding:12px 15px;background:#121e33;color:#e6edf7;font-weight:650}
+button.primary{background:linear-gradient(120deg,#22d3ee,#818cf8);color:#06121a;border:0}
+button.danger{border-color:#783b4d;background:#2a1320;color:#fda4af}
+button:disabled{opacity:.45;cursor:not-allowed}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.metric{background:#0a1322;border:1px solid #1e2a44;border-radius:12px;padding:11px}
+.metric small{display:block;color:#8ea3c0;font-size:10px;text-transform:uppercase;letter-spacing:.12em}
+.metric strong{display:block;margin-top:5px;font:600 16px ui-monospace,monospace}
+.note{color:#8ea3c0;font-size:11px;line-height:1.5;margin-top:15px}
+#error{color:#fda4af;font-size:12px;white-space:pre-wrap;margin-top:12px}
+audio{display:none}
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="kicker">Private live call · audio only</div>
+  <h2>Encrypted voice session</h2>
+  <div class="desc">Your browser captures microphone audio and negotiates a direct WebRTC connection. This signaling service relays setup messages only; it does not receive the audio stream.</div>
+  <div class="status" role="status" aria-live="polite"><span class="dot" id="dot"></span><span class="status-text" id="status">Ready to connect</span></div>
+  <div class="controls">
+    <button class="primary" id="connect">Join call</button>
+    <button id="mute" disabled>Mute microphone</button>
+    <button class="danger" id="leave" disabled>End call</button>
+  </div>
+  <div class="metrics">
+    <div class="metric" style="grid-column:1/-1"><small>Peer verification code · compare by another channel</small><strong id="safetyCode">Pending connection</strong></div>
+    <div class="metric"><small>Connection</small><strong id="connection">Not connected</strong></div>
+    <div class="metric"><small>Round-trip estimate</small><strong id="rtt">—</strong></div>
+  </div>
+  <audio id="remoteAudio" autoplay playsinline></audio>
+  <div id="error"></div>
+  <div class="note">Use headphones to avoid feedback. Keep the access code private. Media uses WebRTC DTLS-SRTP encryption; this is not a formal security audit and does not by itself verify the other caller's real-world identity. No recording is implemented.</div>
+</div>
+<script>
+const CALL_CONFIG = __CALL_CONFIG__;
+const $ = (id) => document.getElementById(id);
+let localStream = null, peer = null, signalSocket = null, role = CALL_CONFIG.role;
+let muted = false, offerStarted = false, closedByUser = false, remoteDescriptionSet = false;
+let pendingIce = [], statsTimer = null;
+
+function setStatus(text, state="warn") {
+  $("status").textContent = text;
+  $("dot").style.background = state === "ok" ? "#34d399" : state === "bad" ? "#fb7185" : "#fbbf24";
+  $("dot").style.color = $("dot").style.background;
+}
+function showError(text) { $("error").textContent = text || ""; }
+function readFingerprint(sdp) {
+  if (!sdp) return null;
+  const match = sdp.match(/a=fingerprint:sha-256\s+([A-F0-9:]+)/i);
+  return match ? match[1].toUpperCase() : null;
+}
+async function updateSafetyCode() {
+  if (!peer || !peer.localDescription || !peer.remoteDescription) return;
+  const local = readFingerprint(peer.localDescription.sdp);
+  const remote = readFingerprint(peer.remoteDescription.sdp);
+  if (!local || !remote) return;
+  const combined = [local, remote].sort().join("|");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(combined));
+  const shortCode = Array.from(new Uint8Array(digest).slice(0, 4))
+    .map(value => value.toString(16).padStart(2, "0")).join("").toUpperCase();
+  $("safetyCode").textContent = shortCode;
+}
+function signal(message) {
+  if (signalSocket && signalSocket.readyState === WebSocket.OPEN) signalSocket.send(JSON.stringify(message));
+}
+async function makePeer() {
+  const response = await fetch(CALL_CONFIG.signalUrl + "/api/ice", {cache:"no-store"});
+  if (!response.ok) throw new Error("Could not load ICE server settings.");
+  const iceConfig = await response.json();
+  peer = new RTCPeerConnection({iceServers: iceConfig.iceServers || [{urls:"stun:stun.l.google.com:19302"}]});
+  for (const track of localStream.getTracks()) peer.addTrack(track, localStream);
+  peer.ontrack = async (event) => {
+    $("remoteAudio").srcObject = event.streams[0];
+    try { await $("remoteAudio").play(); }
+    catch (_) { setStatus("Connected. Tap the page if audio playback is blocked.", "ok"); }
+  };
+  peer.onicecandidate = (event) => { if (event.candidate) signal({type:"ice", candidate:event.candidate}); };
+  peer.onconnectionstatechange = () => {
+    const state = peer ? peer.connectionState : "closed";
+    $("connection").textContent = state;
+    if (state === "connected") setStatus("Call connected — encrypted media active", "ok");
+    else if (state === "failed") setStatus("Connection failed. Network may require TURN.", "bad");
+    else if (state === "disconnected") setStatus("Connection interrupted; trying to recover…");
+    else if (state === "closed") setStatus("Call ended");
+  };
+  peer.oniceconnectionstatechange = () => {
+    if (peer && peer.iceConnectionState === "failed") setStatus("Network path failed. Configure a TURN service and retry.", "bad");
+  };
+}
+async function processSignal(message) {
+  if (!message || typeof message.type !== "string") return;
+  if (message.type === "ready") {
+    setStatus("Invitation accepted. Waiting for the other caller…");
+    return;
+  }
+  if (message.type === "peer-joined") {
+    if (role === "host" && peer && !offerStarted) {
+      offerStarted = true;
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      signal({type:"offer", description:peer.localDescription});
+      setStatus("Calling the invited person…");
+    } else {
+      setStatus("Other caller joined. Negotiating audio…");
+    }
+    return;
+  }
+  if (message.type === "offer") {
+    if (!peer) await makePeer();
+    await peer.setRemoteDescription(message.description);
+    remoteDescriptionSet = true;
+    for (const candidate of pendingIce) await peer.addIceCandidate(candidate);
+    pendingIce = [];
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    await updateSafetyCode();
+    signal({type:"answer", description:peer.localDescription});
+    setStatus("Responding to call…");
+    return;
+  }
+  if (message.type === "answer" && peer) {
+    await peer.setRemoteDescription(message.description);
+    remoteDescriptionSet = true;
+    for (const candidate of pendingIce) await peer.addIceCandidate(candidate);
+    pendingIce = [];
+    await updateSafetyCode();
+    return;
+  }
+  if (message.type === "ice" && message.candidate && peer) {
+    if (remoteDescriptionSet) await peer.addIceCandidate(message.candidate);
+    else pendingIce.push(message.candidate);
+    return;
+  }
+  if (message.type === "peer-left") {
+    setStatus("The other caller disconnected.");
+    $("connection").textContent = "Peer left";
+    return;
+  }
+  if (message.type === "hangup") {
+    await endCall(false);
+    setStatus("The other caller ended the call.");
+    return;
+  }
+  if (message.type === "error") {
+    const errorMessage = message.message || "The call could not be established.";
+    await endCall(false);
+    showError(errorMessage);
+    setStatus("Unable to join call", "bad");
+  }
+}
+async function connectCall() {
+  $("connect").disabled = true;
+  showError("");
+  closedByUser = false;
+  try {
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Microphone access requires a supported browser on HTTPS. Open the secure Streamlit link directly.");
+    }
+    setStatus("Requesting microphone permission…");
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: {echoCancellation:true, noiseSuppression:true, autoGainControl:true},
+      video:false
+    });
+    await makePeer();
+    const wsUrl = CALL_CONFIG.signalUrl.replace(/^http/i, "ws") + "/ws/" + encodeURIComponent(CALL_CONFIG.roomId);
+    signalSocket = new WebSocket(wsUrl);
+    signalSocket.onopen = () => signal({type:"auth", access_code:CALL_CONFIG.accessCode, role:role});
+    signalSocket.onmessage = async (event) => {
+      try { await processSignal(JSON.parse(event.data)); }
+      catch (error) { showError(error.message || "Signaling negotiation failed."); setStatus("Call setup failed", "bad"); }
+    };
+    signalSocket.onerror = () => { showError("Could not connect to the signaling service. Check that the service is deployed and reachable."); setStatus("Signaling connection failed", "bad"); };
+    signalSocket.onclose = () => {
+      if (!closedByUser) setStatus("Signaling disconnected. Rejoin the room to retry.", "bad");
+    };
+    $("mute").disabled = false;
+    $("leave").disabled = false;
+    setStatus("Connecting to the call service…");
+    if (statsTimer) clearInterval(statsTimer);
+    statsTimer = setInterval(async () => {
+      if (!peer || peer.connectionState !== "connected") { if (closedByUser || !peer) clearInterval(statsTimer); return; }
+      try {
+        const stats = await peer.getStats();
+        for (const report of stats.values()) {
+          if (report.type === "candidate-pair" && report.state === "succeeded" && report.currentRoundTripTime != null) {
+            $("rtt").textContent = Math.round(report.currentRoundTripTime * 1000) + " ms";
+            break;
+          }
+        }
+      } catch (_) {}
+    }, 2000);
+  } catch (error) {
+    showError(error.message || "Could not start the call.");
+    setStatus("Microphone or network setup failed", "bad");
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    if (peer) { peer.close(); peer = null; }
+    $("connect").disabled = false;
+  }
+}
+async function endCall(notifyPeer=true) {
+  closedByUser = true;
+  if (notifyPeer) signal({type:"hangup"});
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+  if (signalSocket) { signalSocket.close(); signalSocket = null; }
+  if (peer) { peer.close(); peer = null; }
+  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  $("remoteAudio").srcObject = null;
+  $("connect").disabled = false;
+  $("mute").disabled = true;
+  $("leave").disabled = true;
+  $("connection").textContent = "Not connected";
+  $("rtt").textContent = "—";
+  $("safetyCode").textContent = "Pending connection";
+  muted = false;
+  $("mute").textContent = "Mute microphone";
+  pendingIce = [];
+  offerStarted = false;
+  remoteDescriptionSet = false;
+}
+$("connect").addEventListener("click", connectCall);
+$("mute").addEventListener("click", () => {
+  if (!localStream) return;
+  muted = !muted;
+  for (const track of localStream.getAudioTracks()) track.enabled = !muted;
+  $("mute").textContent = muted ? "Unmute microphone" : "Mute microphone";
+  setStatus(muted ? "Microphone muted" : "Microphone live", "ok");
+});
+$("leave").addEventListener("click", async () => {
+  await endCall(true);
+  setStatus("Call ended");
+});
+window.addEventListener("pagehide", () => { try { signal({type:"hangup"}); } catch (_) {} });
+</script>
+</body>
+</html>

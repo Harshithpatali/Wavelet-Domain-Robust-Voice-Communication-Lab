@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request as UrlRequest, urlopen
 
 import matplotlib
 
@@ -13,6 +18,7 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.audio import load_audio_bytes, synthetic_voice_like
 from src.channel import add_awgn, packet_loss
@@ -57,11 +63,24 @@ if "locked_transmitter_key" not in st.session_state:
 APP_URL = "https://wavelet-domain-robust-voice-communication-lab.streamlit.app/"
 receiver_query_mode = str(st.query_params.get("mode", "")).lower()
 shared_transmission_id = str(st.query_params.get("tx", "")).strip()
+call_room_id = str(st.query_params.get("room", "")).strip()
+call_role_query = "host" if str(st.query_params.get("role", "")).lower() == "host" else "guest"
 receiver_link = f"{APP_URL}?mode=receive"
-initial_mode_index = 1 if receiver_query_mode in {"receive", "receiver"} else 0
+initial_mode_index = (
+    2 if receiver_query_mode == "call"
+    else 1 if receiver_query_mode in {"receive", "receiver"}
+    else 0
+)
 if receiver_query_mode in {"receive", "receiver"} and not st.session_state.get("_receiver_query_mode_applied"):
     st.session_state["app_mode_selector"] = "Receive Shared Transmission"
     st.session_state["_receiver_query_mode_applied"] = True
+if (
+    receiver_query_mode == "call"
+    and call_room_id
+    and st.session_state.get("_call_query_room_applied") != call_room_id
+):
+    st.session_state["app_mode_selector"] = "Private Live Call"
+    st.session_state["_call_query_room_applied"] = call_room_id
 
 
 # =====================================================================
@@ -573,13 +592,24 @@ def hero(
     loss: float,
 ) -> None:
     """Render the application hero/status panel."""
-    mode_label = "TRANSMIT & SEND" if app_mode == "Transmit & Send" else "RECEIVE SHARED TRANSMISSION"
-    key_label = (
-        f"LOCKED · KEY {locked_key}"
-        if key_locked and locked_key is not None
-        else "KEY NOT LOCKED"
-    )
-    key_class = "em" if key_locked else "am"
+    if app_mode == "Transmit & Send":
+        mode_label = "TRANSMIT & SEND"
+        key_label = f"LOCKED · KEY {locked_key}" if key_locked and locked_key is not None else "KEY NOT LOCKED"
+        key_class = "em" if key_locked else "am"
+        wavelet_label = f"{wavelet.upper()} · L{level}"
+        channel_label = f"{snr:.0f} dB · LOSS {loss:.1%}"
+    elif app_mode == "Private Live Call":
+        mode_label = "PRIVATE LIVE CALL"
+        key_label = "WEBRTC MEDIA PROTECTION"
+        key_class = "em"
+        wavelet_label = "REAL-TIME AUDIO"
+        channel_label = "DTLS-SRTP"
+    else:
+        mode_label = "RECEIVE SHARED TRANSMISSION"
+        key_label = "RECEIVER KEY REQUIRED"
+        key_class = "am"
+        wavelet_label = f"{wavelet.upper()} · L{level}"
+        channel_label = "READY TO RECEIVE"
 
     st.markdown(
         f"""
@@ -593,8 +623,8 @@ def hero(
           <div class="hero-chips">
             <span class="chip cy"><b>MODE</b> {mode_label}</span>
             <span class="chip {key_class}"><b>KEY</b> {key_label}</span>
-            <span class="chip vi"><b>WAVELET</b> {wavelet.upper()} · L{level}</span>
-            <span class="chip am"><b>CHANNEL</b> {snr:.0f} dB · LOSS {loss:.1%}</span>
+            <span class="chip vi"><b>MODE</b> {wavelet_label}</span>
+            <span class="chip am"><b>LINK</b> {channel_label}</span>
           </div>
         </section>
         """,
@@ -682,13 +712,24 @@ def hero(
     loss: float,
 ) -> None:
     """Render the application hero/status panel."""
-    mode_label = "TRANSMIT & SEND" if app_mode == "Transmit & Send" else "RECEIVE SHARED TRANSMISSION"
-    key_label = (
-        f"LOCKED · KEY {locked_key}"
-        if key_locked and locked_key is not None
-        else "KEY NOT LOCKED"
-    )
-    key_class = "em" if key_locked else "am"
+    if app_mode == "Transmit & Send":
+        mode_label = "TRANSMIT & SEND"
+        key_label = f"LOCKED · KEY {locked_key}" if key_locked and locked_key is not None else "KEY NOT LOCKED"
+        key_class = "em" if key_locked else "am"
+        wavelet_label = f"{wavelet.upper()} · L{level}"
+        channel_label = f"{snr:.0f} dB · LOSS {loss:.1%}"
+    elif app_mode == "Private Live Call":
+        mode_label = "PRIVATE LIVE CALL"
+        key_label = "WEBRTC MEDIA PROTECTION"
+        key_class = "em"
+        wavelet_label = "REAL-TIME AUDIO"
+        channel_label = "DTLS-SRTP"
+    else:
+        mode_label = "RECEIVE SHARED TRANSMISSION"
+        key_label = "RECEIVER KEY REQUIRED"
+        key_class = "am"
+        wavelet_label = f"{wavelet.upper()} · L{level}"
+        channel_label = "READY TO RECEIVE"
 
     st.markdown(
         f"""
@@ -702,8 +743,8 @@ def hero(
           <div class="hero-chips">
             <span class="chip cy"><b>MODE</b> {mode_label}</span>
             <span class="chip {key_class}"><b>KEY</b> {key_label}</span>
-            <span class="chip vi"><b>WAVELET</b> {wavelet.upper()} · L{level}</span>
-            <span class="chip am"><b>CHANNEL</b> {snr:.0f} dB · LOSS {loss:.1%}</span>
+            <span class="chip vi"><b>MODE</b> {wavelet_label}</span>
+            <span class="chip am"><b>LINK</b> {channel_label}</span>
           </div>
         </section>
         """,
@@ -762,6 +803,185 @@ def packet_with_coeffs(packet: WaveletPacket, coeffs: np.ndarray) -> WaveletPack
 
 
 # =====================================================================
+# PRIVATE LIVE CALL
+# =====================================================================
+def get_call_signaling_config() -> tuple[str, str]:
+    """Read server-to-server signaling configuration without exposing secrets to JS."""
+    try:
+        signal_url = str(st.secrets.get("CALL_SIGNALING_URL", "")).strip()
+    except Exception:
+        signal_url = ""
+    try:
+        creation_token = str(st.secrets.get("CALL_CREATION_TOKEN", "")).strip()
+    except Exception:
+        creation_token = ""
+    signal_url = signal_url or os.getenv("CALL_SIGNALING_URL", "").strip()
+    creation_token = creation_token or os.getenv("CALL_CREATION_TOKEN", "").strip()
+    return signal_url.rstrip("/"), creation_token
+
+
+def create_private_call_room(signal_url: str, creation_token: str, ttl_minutes: int) -> dict:
+    """Create an invitation through the backend using a server-only token."""
+    if not signal_url:
+        raise ValueError("CALL_SIGNALING_URL is missing from Streamlit Secrets.")
+    if not creation_token:
+        raise ValueError("CALL_CREATION_TOKEN is missing from Streamlit Secrets.")
+    if not (signal_url.startswith("https://") or signal_url.startswith("http://localhost")):
+        raise ValueError("The call service must use HTTPS in production.")
+    request = UrlRequest(
+        f"{signal_url}/api/rooms",
+        data=json.dumps({"ttl_minutes": int(ttl_minutes)}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-Call-Creation-Token": creation_token,
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(detail).get("detail", detail)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        raise ValueError(f"Call service returned HTTP {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise ValueError("Could not reach the call signaling service. Check its deployment and URL.") from exc
+    if not result.get("room_id") or not result.get("access_code"):
+        raise ValueError("The call service returned an incomplete invitation.")
+    return result
+
+
+def render_private_live_call() -> None:
+    """Render call creation or the browser-native WebRTC call widget."""
+    st.markdown("### 🔐 Private Live Call")
+    st.caption(
+        "Create a temporary one-to-one voice room. The signaling service forwards setup messages; "
+        "the browsers exchange live audio over encrypted WebRTC media transport."
+    )
+    signal_url, creation_token = get_call_signaling_config()
+    if not signal_url or not creation_token:
+        st.warning("The call interface is added, but the signaling service has not been configured yet.")
+        st.markdown(
+            "Deploy the backend in [call_service/README.md](https://github.com/Harshithpatali/"
+            "Wavelet-Domain-Robust-Voice-Communication-Lab/blob/main/call_service/README.md), "
+            "then add both settings to Streamlit Community Cloud → App settings → Secrets."
+        )
+        st.code(
+            'CALL_SIGNALING_URL = "https://YOUR-SERVICE.onrender.com"\n'
+            'CALL_CREATION_TOKEN = "THE-SAME-32-CHARACTER-OR-LONGER-SECRET-AS-RENDER"',
+            language="toml",
+        )
+        st.info("The existing WAV and research modes remain available while calling is configured.")
+        return
+
+    if not call_room_id:
+        st.markdown("#### Create an invitation")
+        st.write("Choose an expiry, create your room, then send the link and access code to your contact.")
+        ttl_minutes = st.selectbox(
+            "Invitation lifetime",
+            options=[10, 20, 30, 60, 120],
+            index=2,
+            format_func=lambda value: f"{value} minutes",
+            key="private_call_ttl_minutes",
+        )
+        if st.button("Create private call invitation", type="primary", key="create_private_call_invitation"):
+            try:
+                invitation = create_private_call_room(signal_url, creation_token, ttl_minutes)
+                st.session_state["private_call_invitation"] = invitation
+            except (ValueError, OSError, TimeoutError) as exc:
+                st.error(str(exc))
+
+        invitation = st.session_state.get("private_call_invitation")
+        if invitation:
+            room_id = invitation["room_id"]
+            access_code = invitation["access_code"]
+            invite_url = f"{APP_URL}?mode=call&room={quote(room_id, safe='')}"
+            st.success(f"Invitation created. It expires at {invitation.get('expires_at', 'the configured expiry')}.")
+            left, right = st.columns([2, 1])
+            with left:
+                st.markdown("**Invitation link — send this to your contact**")
+                st.code(invite_url, language=None)
+                mail_body = (
+                    "Join my private voice call using this link:\n"
+                    f"{invite_url}\n\n"
+                    "Enter the 8-digit access code I will send separately. "
+                    "The invitation expires automatically."
+                )
+                mailto = (
+                    "mailto:?subject=" + quote("Private voice call", safe="")
+                    + "&body=" + quote(mail_body, safe="")
+                )
+                st.markdown(f"[Compose invitation email]({mailto})")
+            with right:
+                st.markdown("**Access code**")
+                st.code(access_code, language=None)
+                st.caption("For better protection, deliver the code through a separate channel.")
+            if invitation.get("storage_mode") == "memory":
+                st.warning(
+                    "Neon persistence is not configured on the signaling service. This invitation may be "
+                    "lost if the service restarts or sleeps; configure DATABASE_URL on the backend."
+                )
+            if st.button("Join this call as host", type="primary", key="join_created_call_as_host"):
+                st.query_params["mode"] = "call"
+                st.query_params["room"] = room_id
+                st.query_params["role"] = "host"
+                st.rerun()
+            st.caption("Only two people can occupy a room at once. Create a fresh invitation for another call.")
+        else:
+            st.info("The room code is generated by the signaling service and is not stored in the URL.")
+        return
+
+    call_role = call_role_query
+    st.markdown(f"#### Join invitation · {'Host' if call_role == 'host' else 'Guest'}")
+    st.caption("The access code is not in the URL. Enter it to authenticate this browser before signaling begins.")
+    widget_state = st.session_state.get("active_call_widget", {})
+    if not (
+        widget_state.get("room_id") == call_room_id
+        and widget_state.get("role") == call_role
+        and widget_state.get("signaling_url") == signal_url
+    ):
+        access_code_input = st.text_input(
+            "8-digit call access code",
+            type="password",
+            max_chars=8,
+            key=f"private_call_code_{call_room_id}",
+            placeholder="Enter access code",
+        )
+        if st.button("Open encrypted call controls", type="primary", key=f"open_call_controls_{call_room_id}"):
+            if len(access_code_input.strip()) != 8 or not access_code_input.strip().isdigit():
+                st.error("Enter the 8-digit access code from the caller.")
+            else:
+                st.session_state["active_call_widget"] = {
+                    "room_id": call_room_id,
+                    "role": call_role,
+                    "access_code": access_code_input.strip(),
+                    "signaling_url": signal_url,
+                }
+                st.rerun()
+        return
+
+    widget_path = Path(__file__).resolve().parent / "call_service" / "call_widget.html"
+    try:
+        widget_html = widget_path.read_text(encoding="utf-8")
+    except OSError:
+        st.error("The live-call browser widget is missing from this deployment.")
+        return
+    config = {
+        "signalUrl": signal_url,
+        "roomId": widget_state["room_id"],
+        "accessCode": widget_state["access_code"],
+        "role": widget_state["role"],
+    }
+    serialized_config = json.dumps(config, separators=(",", ":")).replace("<", "\\u003c")
+    widget_html = widget_html.replace("__CALL_CONFIG__", serialized_config)
+    components.html(widget_html, height=500, scrolling=False)
+    st.caption("If the peer-verification code differs on the two screens, end the call and do not share sensitive information.")
+
+
+# =====================================================================
 # SIDEBAR — MISSION CONTROL
 # =====================================================================
 with st.sidebar:
@@ -772,22 +992,27 @@ with st.sidebar:
 
     app_mode = st.radio(
         "Mode",
-        ["Transmit & Send", "Receive Shared Transmission"],
+        ["Transmit & Send", "Receive Shared Transmission", "Private Live Call"],
         index=initial_mode_index,
         key="app_mode_selector",
         label_visibility="collapsed",
     )
 
-    st.markdown('<div class="side-sec">Codec Configuration</div>', unsafe_allow_html=True)
-    if app_mode.startswith("Receive"):
-        st.caption("Codec settings are read from the transmission metadata. No manual selection is needed.")
-        wavelet = "db4"
-        level = 4
-        threshold_fraction = 0.02
+    if app_mode == "Private Live Call":
+        wavelet, level, threshold_fraction = "db4", 4, 0.02
+        # The common hero uses these display-only defaults in call mode.
+        snr, loss = 20.0, 0.0
     else:
-        wavelet = st.selectbox("Wavelet", ["haar", "db2", "db4", "db8", "sym4", "coif1"], index=2)
-        level = st.slider("DWT level", 1, 6, 4)
-        threshold_fraction = st.slider("Coefficient threshold", 0.0, 0.20, 0.02, 0.005)
+        st.markdown('<div class="side-sec">Codec Configuration</div>', unsafe_allow_html=True)
+        if app_mode.startswith("Receive"):
+            st.caption("Codec settings are read from the transmission metadata. No manual selection is needed.")
+            wavelet = "db4"
+            level = 4
+            threshold_fraction = 0.02
+        else:
+            wavelet = st.selectbox("Wavelet", ["haar", "db2", "db4", "db8", "sym4", "coif1"], index=2)
+            level = st.slider("DWT level", 1, 6, 4)
+            threshold_fraction = st.slider("Coefficient threshold", 0.0, 0.20, 0.02, 0.005)
 
     if app_mode == "Transmit & Send":
         st.markdown('<div class="side-sec">🔑 Transmitter Key</div>', unsafe_allow_html=True)
@@ -812,18 +1037,22 @@ with st.sidebar:
                 st.session_state.locked_transmitter_key = None
                 st.rerun()
 
-    st.markdown('<div class="side-sec">📡 Simulated Channel</div>', unsafe_allow_html=True)
-    snr = st.slider("Channel SNR (dB)", -5.0, 40.0, 20.0, 1.0)
-    loss = st.slider("Packet/sample loss probability", 0.0, 0.20, 0.0, 0.005)
-    seed = st.number_input("Channel random seed", min_value=0, value=42, step=1)
+    if app_mode != "Private Live Call":
+        st.markdown('<div class="side-sec">📡 Simulated Channel</div>', unsafe_allow_html=True)
+        snr = st.slider("Channel SNR (dB)", -5.0, 40.0, 20.0, 1.0)
+        loss = st.slider("Packet/sample loss probability", 0.0, 0.20, 0.0, 0.005)
+        seed = st.number_input("Channel random seed", min_value=0, value=42, step=1)
 
-    st.markdown(
-        '<div class="foot" style="margin-top:1.4rem;padding:.7rem .8rem;font-size:.7rem;">'
-        "The key is <b>never</b> embedded in the transmission package. "
-        "Deliver it out-of-band."
-        "</div>",
-        unsafe_allow_html=True,
-    )
+        st.markdown(
+            '<div class="foot" style="margin-top:1.4rem;padding:.7rem .8rem;font-size:.7rem;">'
+            "The key is <b>never</b> embedded in the transmission package. "
+            "Deliver it out-of-band."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown('<div class="side-sec">🔐 CALL SECURITY</div>', unsafe_allow_html=True)
+        st.caption("Browser-to-browser WebRTC media is encrypted. The wavelet permutation is not the live-call security layer.")
 
 # =====================================================================
 # HERO
@@ -837,6 +1066,13 @@ hero(
     snr,
     loss,
 )
+
+# =====================================================================
+# PRIVATE LIVE CALL MODE
+# =====================================================================
+if app_mode == "Private Live Call":
+    render_private_live_call()
+    st.stop()
 
 # =====================================================================
 # RECEIVER MODE

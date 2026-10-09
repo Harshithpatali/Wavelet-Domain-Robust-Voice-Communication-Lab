@@ -22,6 +22,7 @@
 [Usage](#-usage) ·
 [Transmission WAV](#-the-transmission-wav-format) ·
 [V4 Research Lab](#-v4-advanced-research-lab) ·
+[Private Live Calling](#-private-live-calling) ·
 [Metrics](#-verification-dashboard) ·
 [Security](#-security-limitations) ·
 [FAQ](#-faq)
@@ -41,7 +42,8 @@
 5. [Usage](#-usage)
 6. [The transmission WAV format](#-the-transmission-wav-format)
 7. [V4 Advanced Research Lab](#-v4-advanced-research-lab)
-8. [Verification Dashboard](#-verification-dashboard)
+8. [Private Live Calling](#-private-live-calling)
+9. [Verification Dashboard](#-verification-dashboard)
 8. [Experiment Matrix](#-experiment-matrix)
 9. [Interpreting Results](#-interpreting-results)
 10. [Security Limitations](#-security-limitations)
@@ -84,7 +86,7 @@ The result is a hands-on lab for exploring **wavelet representation, reversible 
 | 🔐 | **Authenticated-encryption comparison** | Optional AES-256-GCM .wve package; separate passphrase, never stored in the package |
 | 🧪 | **Research Lab** | Bounded multi-parameter sweeps, recovery metrics, and CSV output |
 | 🔗 | **Receiver handoff** | QR links, seven-day expiry, and configurable receiver-session limits |
-| 🛰️ | **Two-mode UI** | *Transmit & Send* and *Receive Shared Transmission* in one app |
+| 🛰️ | **Multi-mode UI** | Transmit, receive, and an optional **Private Live Call** mode (requires the separate signaling service) |
 | 📊 | **Verification dashboard** | Reorder rate, correlation metrics, correct- vs. wrong-key comparison |
 | 📈 | **Visual analysis** | Waveform stages, coefficient order, permutation map, magnitude distribution |
 | 🧾 | **Exports** | Transmission WAV, recovered WAV, summary CSV |
@@ -126,6 +128,39 @@ brew install ffmpeg libsndfile
 ```
 
 > Streamlit Community Cloud already ships with `ffmpeg` and `libsndfile`.
+
+---
+
+## 📞 Private Live Calling
+
+The optional **Private Live Call** mode lets two people open an invitation link, enter an 8-digit access code, and talk live using browser microphone audio.
+
+### Call flow
+
+1. Deploy the signaling service described in [call_service/README.md](call_service/README.md).
+2. Configure `CALL_SIGNALING_URL` and `CALL_CREATION_TOKEN` in Streamlit Secrets. Set the same creation token in the signaling service environment.
+3. Open **Private Live Call** in the sidebar and create a room with an expiry.
+4. Email the invitation link to the recipient and share the 8-digit access code separately where possible.
+5. Both callers open the app link, enter the code, and press **Join call**. The interface includes mute/unmute, end call, connection state, a round-trip estimate, and a peer-verification code.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    A[Caller browser] <-->|WebRTC DTLS-SRTP media| B[Recipient browser]
+    A -->|Offer, answer, ICE| C[FastAPI signaling]
+    C -->|Offer, answer, ICE| B
+    D[Streamlit app] -->|Create invitation using server-only token| C
+    C --> E[(Neon invitation metadata)]
+```
+
+The signaling service relays connection setup messages only. Browser media travels through WebRTC and is encrypted using DTLS-SRTP; no recording is implemented. For some network configurations, a TURN service is needed. Configure `ICE_SERVERS_JSON` in the service to provide TURN as appropriate.
+
+The room access code is stored as a salted PBKDF2 hash, not plaintext. The server-to-server `CALL_CREATION_TOKEN` must remain a Streamlit secret and a signaling-service environment variable; it is never sent to the browser. Invitations are short-lived and allow two participants. Persistent invitation metadata requires `DATABASE_URL` on the signaling service.
+
+Each browser displays a peer-verification code derived from both DTLS fingerprints. Compare those codes through a trusted, independent channel; if they differ, end the call. WebRTC protects media in transit, but a room code by itself does not verify the real-world identity of the other person. This prototype is not security-audited, and the wavelet coefficient permutation is **not** the live-call encryption mechanism.
+
+Deployment configuration, environment variables, and limitations are documented in [call_service/README.md](call_service/README.md).
 
 ---
 
