@@ -1443,23 +1443,34 @@ with tab_research:
 
     with st.container(border=True):
         st.markdown("##### Sequence-numbered packet stream")
-        packetized_bytes = pack_transmission(transmission_wav, payload_size=1024)
         st.caption(
             "The optional .wvp export wraps the WAV in sequence-numbered packets with CRC32 checksums. "
-            "The receiver validates packet order and integrity before decoding the WAV payload."
+            "Packaging runs only on request so ordinary sends do not pay the additional memory cost."
         )
-        packet_cols = st.columns(3)
-        packet_cols[0].metric("Framed packets", (len(transmission_wav) + 1023) // 1024)
-        packet_cols[1].metric("WAV bytes", f"{len(transmission_wav):,}")
-        packet_cols[2].metric("Packet-stream bytes", f"{len(packetized_bytes):,}")
-        st.download_button(
-            "Download packetized .wvp stream",
-            data=packetized_bytes,
-            file_name="voice_transmission.wvp",
-            mime="application/octet-stream",
-            key="download_packetized_transmission",
-            width="stretch",
-        )
+        current_packet_signature = hashlib.sha256(transmission_wav).hexdigest()
+        if st.button("Create sequence-numbered .wvp stream", key="create_packetized_transmission"):
+            st.session_state["packetized_transmission_package"] = pack_transmission(
+                transmission_wav, payload_size=1024
+            )
+            st.session_state["packetized_transmission_signature"] = current_packet_signature
+
+        packetized_bytes = st.session_state.get("packetized_transmission_package")
+        saved_packet_signature = st.session_state.get("packetized_transmission_signature")
+        if packetized_bytes and saved_packet_signature == current_packet_signature:
+            packet_cols = st.columns(3)
+            packet_cols[0].metric("Framed packets", (len(transmission_wav) + 1023) // 1024)
+            packet_cols[1].metric("WAV bytes", f"{len(transmission_wav):,}")
+            packet_cols[2].metric("Packet-stream bytes", f"{len(packetized_bytes):,}")
+            st.download_button(
+                "Download packetized .wvp stream",
+                data=packetized_bytes,
+                file_name="voice_transmission.wvp",
+                mime="application/octet-stream",
+                key="download_packetized_transmission",
+                width="stretch",
+            )
+        elif packetized_bytes:
+            st.info("The source transmission changed. Create a new .wvp stream before downloading.")
 
     with st.container(border=True):
         st.markdown("##### Authenticated-encryption comparison")
