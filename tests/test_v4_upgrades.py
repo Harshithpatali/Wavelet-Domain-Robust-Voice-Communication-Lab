@@ -1,10 +1,12 @@
 import numpy as np
 import pytest
 
+from src.channel import gilbert_elliott_mask
 from src.crypto import decrypt_transmission, encrypt_transmission
 from src.experiment_lab import run_parameter_sweep, simulate_coefficient_channel
 from src.fec import encode_xor, recover_xor_packets, transmit_with_xor_fec
-from src.packet import DataPacket, packetize, reassemble
+from src.metrics import segmental_snr_db
+from src.packet import DataPacket, pack_transmission, packetize, reassemble, unpack_transmission
 
 
 def test_packet_round_trip_and_out_of_order_frames():
@@ -12,6 +14,34 @@ def test_packet_round_trip_and_out_of_order_frames():
     frames = packetize(raw, payload_size=333)
     assert reassemble(list(reversed(frames))) == raw
 
+
+def test_packetized_transmission_round_trip_and_tamper_detection():
+    raw = b"RIFF" + bytes((i * 11) % 256 for i in range(12000))
+    packed = pack_transmission(raw, payload_size=512)
+    assert unpack_transmission(packed) == raw
+    damaged = bytearray(packed)
+    damaged[-1] ^= 0x01
+    with pytest.raises(ValueError, match="checksum"):
+        unpack_transmission(bytes(damaged))
+
+
+def test_burst_loss_mask_is_reproducible():
+    first = gilbert_elliott_mask(
+        1000, p_good_to_bad=0.05, p_bad_to_good=0.2,
+        loss_good=0.01, loss_bad=0.8, rng=np.random.default_rng(99)
+    )
+    second = gilbert_elliott_mask(
+        1000, p_good_to_bad=0.05, p_bad_to_good=0.2,
+        loss_good=0.01, loss_bad=0.8, rng=np.random.default_rng(99)
+    )
+    assert np.array_equal(first, second)
+    assert first.dtype == bool
+
+
+def test_segmental_snr_is_clipped_and_finite():
+    source = np.sin(np.linspace(0, 20, 4000))
+    score = segmental_snr_db(source, source.copy())
+    assert score == 35.0
 
 def test_packet_checksum_detects_corruption():
     frame = bytearray(packetize(b"hello world", payload_size=32)[0])
