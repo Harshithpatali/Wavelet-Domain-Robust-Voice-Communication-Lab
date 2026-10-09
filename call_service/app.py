@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -135,13 +135,23 @@ def ice_configuration() -> dict[str, list[dict[str, Any]]]:
 
 
 @app.post("/api/rooms")
-def create_room(body: CreateRoomRequest, websocket_ip: str | None = None) -> JSONResponse:
+def create_room(
+    body: CreateRoomRequest,
+    request: Request,
+    x_call_creation_token: str | None = Header(default=None),
+) -> JSONResponse:
     """Create an expiring two-person room and return its access code once."""
     _prune_expired_rooms()
-    # Streamlit's server-side POST cannot reliably forward a browser client IP.
-    # A configurable app-level key or upstream rate limiting is recommended
-    # for production deployments. The WebSocket join attempts are IP limited.
-    _ = websocket_ip
+    expected_token = os.getenv("CALL_CREATION_TOKEN", "")
+    if len(expected_token) < 32 or not x_call_creation_token:
+        return JSONResponse(
+            {"detail": "Call room creation is not configured."},
+            status_code=503,
+        )
+    if not secrets.compare_digest(x_call_creation_token, expected_token):
+        return JSONResponse({"detail": "Call room creation is unauthorized."}, status_code=401)
+    # The creation token is server-to-server only; it is never sent to the browser.
+    # Requests are made by the Streamlit Python process, not by the embedded UI.
     room_id = secrets.token_urlsafe(16)
     access_code = _new_access_code()
     salt = secrets.token_bytes(16)
