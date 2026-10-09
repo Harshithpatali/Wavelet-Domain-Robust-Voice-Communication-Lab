@@ -6,12 +6,14 @@ import json
 import os
 import secrets
 import time
+
+import psycopg
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -85,6 +87,63 @@ def _check_rate_limit(bucket: deque[float], limit: int, window_seconds: float) -
     return True
 
 
+def _database_url() -> str:
+    return os.getenv("DATABASE_URL", "").strip() or os.getenv("NEON_DATABASE_URL", "").strip()
+
+
+def _ensure_room_schema() -> None:
+    database_url = _database_url()
+    if not database_url:
+        return
+    with psycopg.connect(database_url, connect_timeout=5) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS wavelet_call_rooms (
+                    id TEXT PRIMARY KEY,
+                    salt BYTEA NOT NULL,
+                    code_hash BYTEA NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS wavelet_call_rooms_expires_idx "
+                "ON wavelet_call_rooms (expires_at)"
+            )
+            cur.execute("DELETE FROM wavelet_call_rooms WHERE expires_at <= NOW()")
+        conn.commit()
+
+
+def _load_room(room_id: str) -> Room | None:
+    room = ROOMS.get(room_id)
+    if room and room.expires_at > _utcnow():
+        return room
+    database_url = _database_url()
+    if not database_url:
+        return None
+    _ensure_room_schema()
+    with psycopg.connect(database_url, connect_timeout=5) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT salt, code_hash, expires_at FROM wavelet_call_rooms "
+                "WHERE id = %s AND expires_at > NOW()",
+                (room_id,),
+            )
+            row = cur.fetchone()
+    if row is None:
+        return None
+    room = Room(
+        room_id=room_id,
+        salt=bytes(row[0]),
+        code_hash=bytes(row[1]),
+        expires_at=row[2],
+    )
+    ROOMS[room_id] = room
+    return room
+
+
 def _prune_expired_rooms() -> None:
     now = _utcnow()
     expired = [room_id for room_id, room in ROOMS.items() if room.expires_at <= now]
@@ -96,6 +155,9 @@ def _prune_expired_rooms() -> None:
                     asyncio.create_task(socket.close(code=1008, reason="Call invitation expired"))
                 except RuntimeError:
                     pass
+    database_url = _database_url()
+    if database_url:
+        _ensure_room_schema()
 
 
 def _configured_ice_servers() -> list[dict[str, Any]]:
@@ -162,6 +224,21 @@ def create_room(
         expires_at=_utcnow() + timedelta(minutes=body.ttl_minutes),
     )
     ROOMS[room_id] = room
+    database_url = _database_url()
+    storage_mode = "memory"
+    if database_url:
+        _ensure_room_schema()
+        with psycopg.connect(database_url, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO wavelet_call_rooms (id, salt, code_hash, expires_at)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (room_id, salt, room.code_hash, room.expires_at),
+                )
+            conn.commit()
+        storage_mode = "neon"
     return JSONResponse(
         {
             "room_id": room_id,
@@ -169,6 +246,7 @@ def create_room(
             "expires_at": room.expires_at.isoformat(),
             "ttl_minutes": body.ttl_minutes,
             "max_participants": 2,
+            "storage_mode": storage_mode,
         }
     )
 
@@ -222,7 +300,7 @@ async def signaling(websocket: WebSocket, room_id: str) -> None:
             return
 
         _prune_expired_rooms()
-        room = ROOMS.get(room_id)
+        room = _load_room(room_id)
         role_value = auth.get("role")
         access_code = auth.get("access_code")
         if room is None or room.expires_at <= _utcnow():
