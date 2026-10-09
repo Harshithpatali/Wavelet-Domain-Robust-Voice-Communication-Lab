@@ -40,7 +40,8 @@
 4. [How It Works](#-how-it-works)
 5. [Usage](#-usage)
 6. [The transmission WAV format](#-the-transmission-wav-format)
-7. [Verification Dashboard](#-verification-dashboard)
+7. [V4 Advanced Research Lab](#-v4-advanced-research-lab)
+8. [Verification Dashboard](#-verification-dashboard)
 8. [Experiment Matrix](#-experiment-matrix)
 9. [Interpreting Results](#-interpreting-results)
 10. [Security Limitations](#-security-limitations)
@@ -77,7 +78,12 @@ The result is a hands-on lab for exploring **wavelet representation, reversible 
 | 🎛️ | **Full DWT control** | Haar, db2–db8, sym4, coif1 · decomposition levels 1–6 |
 | 🔑 | **Key-first workflow** | Key is locked *before* audio upload and never stored in the package |
 | 🎵 | **Portable WAV transmission** | Normal playable mono WAV audio + private `WVTP` recovery payload; key is never embedded |
-| 📡 | **Channel simulation** | Adjustable AWGN SNR and packet-loss probability, reproducible via seeds |
+| 📡 | **Channel simulation** | Adjustable AWGN, random loss, and reproducible Gilbert–Elliott burst-loss experiments |
+| 📦 | **Packet transport** | Optional .wvp stream with sequence numbers, CRC32, and receiver reassembly |
+| 🛟 | **Forward error correction** | XOR parity can repair one erased packet per group of four |
+| 🔐 | **Authenticated-encryption comparison** | Optional AES-256-GCM .wve package; separate passphrase, never stored in the package |
+| 🧪 | **Research Lab** | Bounded multi-parameter sweeps, recovery metrics, and CSV output |
+| 🔗 | **Receiver handoff** | QR links, seven-day expiry, and configurable receiver-session limits |
 | 🛰️ | **Two-mode UI** | *Transmit & Send* and *Receive Shared Transmission* in one app |
 | 📊 | **Verification dashboard** | Reorder rate, correlation metrics, correct- vs. wrong-key comparison |
 | 📈 | **Visual analysis** | Waveform stages, coefficient order, permutation map, magnitude distribution |
@@ -502,7 +508,7 @@ The suite verifies:
 | M4A / MP3 / AAC upload fails | `ffmpeg` missing | Install `ffmpeg` and `libsndfile1` (see [Quick Start](#-quick-start)) |
 | Receiver says the WAV has no recovery payload | The uploaded file is a plain audio preview | Download **voice_transmission.wav**, **voice_transmission.wvp**, or an encrypted **voice_transmission.wve** from the sender |
 | Receiver says the WAV is not a Wavelet Voice Lab transmission | The upload is not an exported transmission or its payload is corrupted | Re-export the .wav/.wvp/.wve package from the sender |
-| Receiver reports a wavelet/DWT mismatch | Receiver settings differ from the sender | Select the same wavelet and DWT level used by the sender |
+| Old V1/V2 transmission needs specific settings | Legacy formats may have less metadata than V3 | Prefer the current self-describing V3 WAV export; V3 settings load automatically |
 | Encrypted .wve package fails | The AES-GCM passphrase is wrong or the package was modified | Verify the separate package passphrase; keep the wavelet key distinct |
 | Packetized .wvp package fails | A packet is missing/corrupted or the stream was truncated | Re-export the .wvp package; CRC and sequence checks reject incomplete streams |
 | Recovered audio is noise | Wrong key or damaged payload | Verify the separately shared key; V3 codec settings are read from the WAV metadata |
