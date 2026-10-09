@@ -156,11 +156,13 @@ flowchart LR
 
 The signaling service relays connection setup messages only. Browser media travels through WebRTC and is encrypted using DTLS-SRTP; no recording is implemented. For some network configurations, a TURN service is needed. Configure `ICE_SERVERS_JSON` in the service to provide TURN as appropriate.
 
+**Important distinction:** the current live-call mode does **not** transform audio into wavelet coefficients. It sends normal browser microphone audio through WebRTC; the recipient's browser decrypts the media transport and plays the voice normally. The invitation link identifies the room, while the separate eight-digit access code controls room entry. That code is not the media-encryption key—WebRTC negotiates the media keys automatically.
+
 The room access code is stored as a salted PBKDF2 hash, not plaintext. The server-to-server `CALL_CREATION_TOKEN` must remain a Streamlit secret and a signaling-service environment variable; it is never sent to the browser. Invitations are short-lived and allow two participants. Persistent invitation metadata requires `DATABASE_URL` on the signaling service.
 
 Each browser displays a peer-verification code derived from both DTLS fingerprints. Compare those codes through a trusted, independent channel; if they differ, end the call. WebRTC protects media in transit, but a room code by itself does not verify the real-world identity of the other person. This prototype is not security-audited, and the wavelet coefficient permutation is **not** the live-call encryption mechanism.
 
-Deployment configuration, environment variables, and limitations are documented in [call_service/README.md](call_service/README.md).
+For standard Docker Web Service deployment and limitations, see [call_service/README.md](call_service/README.md).
 
 ---
 
