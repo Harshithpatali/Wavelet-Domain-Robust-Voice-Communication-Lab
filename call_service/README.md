@@ -1,73 +1,81 @@
 # Private Live Call Signaling Service
 
-This is the separate FastAPI/WebSocket signaling service for the Streamlit Wavelet Voice Lab. It relays WebRTC offers, answers, and ICE candidates only. The browsers exchange microphone media directly over WebRTC; the signaling service does not receive or record audio.
+This is the separate FastAPI/WebSocket signaling service for the Streamlit Wavelet Voice Lab. It relays WebRTC offers, answers, and ICE candidates only. The browsers exchange microphone media over WebRTC; this service does not receive or record the media stream.
 
-## Deploy on Render
+## Deploy as a regular Render Docker Web Service
 
-Create a **Web Service** linked to this repository and branch \`main\` after the private-call pull request is merged.
+Use a normal **Web Service** rather than a Blueprint.
 
-- Runtime: Python
-- Build command: \`pip install -r call_service/requirements.txt\`
-- Start command: \`uvicorn call_service.app:app --host 0.0.0.0 --port $PORT\`
-- Region: choose the closest available region
-- Instances/workers: use one service instance and one Uvicorn worker because connected WebSocket rooms are process-local
+1. In Render, choose **New → Web Service** and connect the GitHub repository.
+2. Select branch `main`.
+3. Choose **Docker** as the runtime.
+4. Set **Dockerfile Path** to `call_service/Dockerfile`.
+5. Set **Docker Context Directory** to `.` (the repository root). The Dockerfile copies `call_service/requirements.txt` and the `call_service/` package from this root context.
+6. Choose the nearest available region (Singapore is a reasonable starting point for users in India).
+7. Set the health-check path to `/healthz`.
+8. Use one instance and one Uvicorn worker. Live room socket state is process-local, so multiple workers/instances are not supported by this starter service.
 
-Configure these Render environment variables:
+The container automatically binds Uvicorn to Render's `PORT` environment variable.
 
-- \`CALL_CREATION_TOKEN\`: generate a random secret with at least 32 characters. This server-to-server secret authorizes room creation and must not be exposed in the browser.
-- \`DATABASE_URL\`: optional but recommended; use the existing Neon Postgres connection string. Persistent invitations are saved in \`wavelet_call_rooms\`, with only a salted PBKDF2 hash of the access code. The plaintext code is returned only when the invitation is created.
-- \`ALLOWED_ORIGINS\`: comma-separated Streamlit origin(s), for example \`https://wavelet-domain-robust-voice-communication-lab.streamlit.app,http://localhost:8501\`.
-- \`ICE_SERVERS_JSON\`: optional JSON array containing STUN/TURN server configuration. The default is a public STUN server. Production deployments should configure a reputable TURN provider with credentials that can be rotated or time-limited.
+### Required environment variables
 
-The service exposes \`/healthz\` for health checks and \`/api/ice\` to provide ICE server configuration. Use the Render HTTPS/WSS URL; do not use plain HTTP/WSS in production.
+- `CALL_CREATION_TOKEN`: set a long random secret (at least 32 characters). It authorizes room creation from the Streamlit server. Generate it in Render or another password generator and never expose it in browser code or email links.
+- `ALLOWED_ORIGINS`: set to `https://wavelet-domain-robust-voice-communication-lab.streamlit.app`. For local development, append `http://localhost:8501` separated by a comma.
+- `DATABASE_URL`: recommended. Use your existing Neon PostgreSQL connection string to persist expiring room metadata in `wavelet_call_rooms`. Only a salted PBKDF2 hash of the access code is stored. Without this variable, rooms exist only in the running process and are lost on restart or sleep.
+- `ICE_SERVERS_JSON`: optional JSON array for custom STUN/TURN configuration. The default is a public STUN server. Some networks require TURN; for more reliable calling, configure a reputable TURN service and use short-lived credentials where supported.
+
+After deployment, your service URL should be HTTPS, and its WebSocket signaling will use WSS. Verify `https://YOUR-SERVICE.onrender.com/healthz` returns `{"status":"ok"}` before configuring Streamlit.
+
+> **Free-instance consideration:** a free service may sleep when idle, so the first invitation can be slow to create and an idle service may not be suitable for uninterrupted calling. Use a plan that stays active if you need reliable availability. This is a Render hosting constraint, not a code feature.
 
 ## Configure Streamlit Community Cloud
 
 In the Streamlit app's Secrets settings, add:
 
-\`\`\`toml
+```toml
 CALL_SIGNALING_URL = "https://YOUR-SERVICE.onrender.com"
-CALL_CREATION_TOKEN = "THE-SAME-SECRET-AS-RENDER"
-\`\`\`
+CALL_CREATION_TOKEN = "THE-SAME-SERVER-ONLY-SECRET-AS-RENDER"
+```
 
-The creation token is only used by the Streamlit Python server to create a room. It is not passed to the embedded browser widget. Do not put the token in a query string, email, or public repository.
+The `CALL_CREATION_TOKEN` must exactly match the value set on the signaling service. The Streamlit Python process sends it to create rooms; it is never inserted into the invitation link or browser widget.
 
 ## Invite flow
 
-1. Open **Private Live Call** in the sidebar and create an invitation.
-2. Share the generated app link with the recipient.
-3. Share the 8-digit access code separately when possible.
-4. Both parties open the link, enter the access code, and press **Join call**.
-5. The host and guest negotiate audio with WebRTC. The UI includes mute, leave, connection state, latency estimate, and a peer-verification code derived from the exchanged DTLS fingerprints.
+1. Open **Private Live Call** in the sidebar and create a room with an expiry.
+2. Email the invitation link to the other person.
+3. Send the 8-digit access code through a separate channel where possible.
+4. Both parties open the app link, enter the code, and press **Join call**.
+5. Compare the peer-verification code shown on both screens using a trusted independent channel before sharing sensitive information.
 
-The peer-verification code should match on both screens. Compare it through a separate trusted channel before discussing sensitive information. Stop the call if codes do not match.
+The user interface includes mute/unmute, end call, connection state, a round-trip estimate, and the peer-verification code.
 
-## Security and operating limits
+## What the live-call mode does—and does not do
 
-- WebRTC media uses DTLS-SRTP encryption; the signaling service does not handle media packets.
-- The access code protects room entry but is not, by itself, proof of a person's identity. The peer-verification code provides an additional manual check against signaling substitution; it is not a formal security audit.
-- The default public STUN service cannot guarantee connectivity on every network. Some networks require TURN relay configuration.
-- With \`DATABASE_URL\`, invitations persist across service restarts until expiry. Live socket connections themselves do not survive a restart.
-- Without \`DATABASE_URL\`, invitations live only in process memory and disappear if the service restarts/sleeps.
-- The starter service targets one-to-one calls and one service instance. Horizontal scaling requires shared room/connection coordination.
-- The browser never requests a camera, does not record audio, and asks for microphone permission only when the user presses Join call.
-- Do not present the wavelet-coefficient permutation as cryptographic protection. It remains an educational signal-processing mode separate from WebRTC media encryption.
+- **Currently implemented:** normal browser microphone audio is sent over WebRTC with DTLS-SRTP media encryption. The receiver's browser decrypts the media and plays the audio normally after the peer connection is established.
+- **Not currently implemented:** the live audio is not transformed into wavelet coefficients or run through the offline DWT/scrambling/reconstruction pipeline.
+- The **invitation link** identifies the room, and the separate **8-digit access code** authorizes joining. The room code is not the media-encryption key; WebRTC negotiates transport keys automatically.
+- The signaling service relays setup messages, not audio. The room access code is stored as a salted PBKDF2 hash rather than plaintext.
+- The peer-verification code is derived from the exchanged DTLS fingerprints. Compare it independently; a room code alone does not prove the other caller's real-world identity.
+- This prototype has not had an independent security audit. Do not describe it as an audited end-to-end encrypted product.
+- No camera or recording is implemented. The browser asks for microphone permission only after the caller presses Join.
+- The default STUN server cannot guarantee connectivity on every network. TURN may be required.
+- The prototype supports one-to-one rooms on a single signaling instance. Live sockets will disconnect during service restarts; horizontal scaling needs shared connection coordination.
 
 ## Local development
 
-\`\`\`bash
+```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows: .\\.venv\\Scripts\\Activate.ps1
 pip install -r call_service/requirements.txt
 export CALL_CREATION_TOKEN="local-development-token-change-me-123456"
 uvicorn call_service.app:app --reload --port 8000
-\`\`\`
+```
 
-In another terminal run \`streamlit run app.py\` and set \`CALL_SIGNALING_URL\` and \`CALL_CREATION_TOKEN\` in Streamlit secrets or environment variables.
+In another terminal run `streamlit run app.py` and set `CALL_SIGNALING_URL=http://localhost:8000` plus `CALL_CREATION_TOKEN` in Streamlit secrets or environment variables. Only use HTTP for local development.
 
-Run the service tests from the repository root:
+Run the tests from the repository root:
 
-\`\`\`bash
+```bash
 pip install -r requirements.txt -r call_service/requirements.txt
 pytest -q
-\`\`\`
+```
