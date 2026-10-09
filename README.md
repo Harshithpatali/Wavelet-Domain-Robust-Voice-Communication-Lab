@@ -156,11 +156,17 @@ flowchart LR
 
 The signaling service relays connection setup messages only. Browser media travels through WebRTC and is encrypted using DTLS-SRTP; no recording is implemented. For some network configurations, a TURN service is needed. Configure `ICE_SERVERS_JSON` in the service to provide TURN as appropriate.
 
-**Important distinction:** the current live-call mode does **not** transform audio into wavelet coefficients. It sends normal browser microphone audio through WebRTC; the recipient's browser decrypts the media transport and plays the voice normally. The invitation link identifies the room, while the separate eight-digit access code controls room entry. That code is not the media-encryption key—WebRTC negotiates the media keys automatically.
+**Live wavelet processing is now part of the call prototype.** In the call widget, both participants keep **Enable live wavelet transform + keyed scrambling** checked and enter the same separate wavelet code (at least eight characters) before joining. The browser transforms microphone audio in 960-sample blocks at 48 kHz using a five-level Haar DWT, applies a deterministic key-seeded coefficient permutation, and reconstructs a scrambled audio block before WebRTC encodes it. The receiving browser runs the inverse permutation and inverse transform after decoding the remote media.
+
+The shared wavelet code is entered locally in each browser and is not sent to the signaling service or included in the invitation URL. It is **different from** the eight-digit room access code. If callers use different wavelet codes, recovery will fail. The checkbox can be switched off for a normal WebRTC audio baseline.
+
+**Research limitations:** the browser's WebRTC audio codec is lossy, and live block processing is sensitive to timing, packet-loss concealment, clipping, and block-boundary artifacts. The DSP path has unit tests but still needs real two-browser/device listening tests. The coefficient permutation is reversible obfuscation, **not cryptographic encryption**. WebRTC DTLS-SRTP remains the actual network media protection; do not claim the custom wavelet step makes the call secure against cryptanalysis.
+
+This prototype is for research and demonstration, not an operational police radio. It does not transmit over a walkie-talkie RF frequency and is not compatible with ordinary handheld radios by itself. Integrating with physical radios requires compatible radio hardware/gateways, radio-system engineering, and approved cryptographic equipment for real operational confidentiality.
 
 The room access code is stored as a salted PBKDF2 hash, not plaintext. The server-to-server `CALL_CREATION_TOKEN` must remain a Streamlit secret and a signaling-service environment variable; it is never sent to the browser. Invitations are short-lived and allow two participants. Persistent invitation metadata requires `DATABASE_URL` on the signaling service.
 
-Each browser displays a peer-verification code derived from both DTLS fingerprints. Compare those codes through a trusted, independent channel; if they differ, end the call. WebRTC protects media in transit, but a room code by itself does not verify the real-world identity of the other person. This prototype is not security-audited, and the wavelet coefficient permutation is **not** the live-call encryption mechanism.
+Each browser displays a peer-verification code derived from both DTLS fingerprints. Compare those codes through a trusted, independent channel; if they differ, end the call. A room code by itself does not verify the real-world identity of the other person. This prototype is not security-audited.
 
 For standard Docker Web Service deployment and limitations, see [call_service/README.md](call_service/README.md).
 
