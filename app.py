@@ -74,9 +74,13 @@ initial_mode_index = (
 if receiver_query_mode in {"receive", "receiver"} and not st.session_state.get("_receiver_query_mode_applied"):
     st.session_state["app_mode_selector"] = "Receive Shared Transmission"
     st.session_state["_receiver_query_mode_applied"] = True
-if receiver_query_mode == "call" and not st.session_state.get("_call_query_mode_applied"):
+if (
+    receiver_query_mode == "call"
+    and call_room_id
+    and st.session_state.get("_call_query_room_applied") != call_room_id
+):
     st.session_state["app_mode_selector"] = "Private Live Call"
-    st.session_state["_call_query_mode_applied"] = True
+    st.session_state["_call_query_room_applied"] = call_room_id
 
 
 # =====================================================================
@@ -996,6 +1000,8 @@ with st.sidebar:
 
     if app_mode == "Private Live Call":
         wavelet, level, threshold_fraction = "db4", 4, 0.02
+        # The common hero uses these display-only defaults in call mode.
+        snr, loss = 20.0, 0.0
     else:
         st.markdown('<div class="side-sec">Codec Configuration</div>', unsafe_allow_html=True)
         if app_mode.startswith("Receive"):
