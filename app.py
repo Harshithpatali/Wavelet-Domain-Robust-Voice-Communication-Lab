@@ -861,6 +861,13 @@ def render_private_live_call() -> None:
         "Create a temporary one-to-one voice room. The signaling service forwards setup messages; "
         "the browsers exchange live audio over encrypted WebRTC media transport."
     )
+    st.info(
+        "Live-call audio is currently **not transformed by the wavelet codec**. The browser sends "
+        "normal microphone audio over WebRTC; DTLS-SRTP encrypts it in transit and the recipient's "
+        "browser decrypts and plays it after joining. The invitation link identifies the room, the "
+        "separate 8-digit code authorizes joining, and WebRTC negotiates media keys automatically. "
+        "The code is not the audio-encryption key."
+    )
     signal_url, creation_token = get_call_signaling_config()
     if not signal_url or not creation_token:
         st.warning("The call interface is added, but the signaling service has not been configured yet.")
