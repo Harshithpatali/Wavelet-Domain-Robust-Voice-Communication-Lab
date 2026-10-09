@@ -51,9 +51,12 @@ The user interface includes mute/unmute, end call, connection state, a round-tri
 
 ## What the live-call mode does—and does not do
 
-- **Currently implemented:** normal browser microphone audio is sent over WebRTC with DTLS-SRTP media encryption. The receiver's browser decrypts the media and plays the audio normally after the peer connection is established.
-- **Not currently implemented:** the live audio is not transformed into wavelet coefficients or run through the offline DWT/scrambling/reconstruction pipeline.
-- The **invitation link** identifies the room, and the separate **8-digit access code** authorizes joining. The room code is not the media-encryption key; WebRTC negotiates transport keys automatically.
+- **Implemented as a research mode:** when the live wavelet checkbox is enabled (default), each browser applies a five-level Haar DWT to 960-sample/48 kHz blocks, keyed coefficient permutation and inverse DWT reconstruction before sending audio to the WebRTC codec. The receiving browser uses the matching key to reverse the coefficient permutation.
+- Both callers must enter exactly the same separate wavelet code (minimum eight characters). It remains local to the browser and is not sent through signaling. This is a weak seeded permutation, not cryptographic encryption.
+- WebRTC uses DTLS-SRTP to encrypt media in transit regardless of the wavelet checkbox. The recipient's browser decrypts that transport and, if wavelet mode is enabled, attempts the inverse signal processing before playback.
+- The **invitation link** identifies the room, and the separate **8-digit access code** authorizes joining. The room code is not the wavelet code or media-encryption key; WebRTC negotiates transport keys automatically.
+- The wavelet path is a prototype and may create artifacts because the WebRTC codec is lossy and block alignment matters. The unit tests validate the DSP transform offline; testing between separate real devices is still required.
+- This browser app does not interface with RF walkie-talkies. Physical-radio integration would require compatible hardware or a radio gateway and a separately engineered/approved radio security system. Do not deploy the prototype for operational police communications.
 - The signaling service relays setup messages, not audio. The room access code is stored as a salted PBKDF2 hash rather than plaintext.
 - The peer-verification code is derived from the exchanged DTLS fingerprints. Compare it independently; a room code alone does not prove the other caller's real-world identity.
 - This prototype has not had an independent security audit. Do not describe it as an audited end-to-end encrypted product.

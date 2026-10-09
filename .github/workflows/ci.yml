@@ -21,6 +21,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -r call_service/requirements.txt
 
+      - name: Set up Node.js for live wavelet DSP tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test live wavelet audio transform
+        run: node --test tests/wavelet_audio_worklet.test.cjs
+
       - name: Compile Python files
         run: python -m compileall -q app.py run_experiment.py src tests call_service
 

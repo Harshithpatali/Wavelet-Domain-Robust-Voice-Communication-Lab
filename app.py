@@ -970,17 +970,23 @@ def render_private_live_call() -> None:
                 st.rerun()
         return
 
-    widget_path = Path(__file__).resolve().parent / "call_service" / "call_widget.html"
+    service_dir = Path(__file__).resolve().parent / "call_service"
+    widget_path = service_dir / "call_widget.html"
+    worklet_path = service_dir / "wavelet_audio_worklet.js"
     try:
         widget_html = widget_path.read_text(encoding="utf-8")
+        wavelet_worklet_source = worklet_path.read_text(encoding="utf-8")
     except OSError:
-        st.error("The live-call browser widget is missing from this deployment.")
+        st.error("The live-call widget or live wavelet processor is missing from this deployment.")
         return
     config = {
         "signalUrl": signal_url,
         "roomId": widget_state["room_id"],
         "accessCode": widget_state["access_code"],
         "role": widget_state["role"],
+        # The transform key is entered inside the browser widget and is never
+        # sent through the signaling service. The worklet source contains no secrets.
+        "waveletWorkletSource": wavelet_worklet_source,
     }
     serialized_config = json.dumps(config, separators=(",", ":")).replace("<", "\\u003c")
     widget_html = widget_html.replace("__CALL_CONFIG__", serialized_config)
