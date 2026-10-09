@@ -53,7 +53,7 @@ const CALL_CONFIG = __CALL_CONFIG__;
 const $ = (id) => document.getElementById(id);
 let localStream = null, peer = null, signalSocket = null, role = CALL_CONFIG.role;
 let muted = false, offerStarted = false, closedByUser = false, remoteDescriptionSet = false;
-let pendingIce = [];
+let pendingIce = [], statsTimer = null;
 
 function setStatus(text, state="warn") {
   $("status").textContent = text;
@@ -159,9 +159,10 @@ async function processSignal(message) {
     return;
   }
   if (message.type === "error") {
-    showError(message.message || "The call could not be established.");
+    const errorMessage = message.message || "The call could not be established.";
+    await endCall(false);
+    showError(errorMessage);
     setStatus("Unable to join call", "bad");
-    if (signalSocket) signalSocket.close();
   }
 }
 async function connectCall() {
@@ -192,7 +193,8 @@ async function connectCall() {
     $("mute").disabled = false;
     $("leave").disabled = false;
     setStatus("Connecting to the call service…");
-    const statsTimer = setInterval(async () => {
+    if (statsTimer) clearInterval(statsTimer);
+    statsTimer = setInterval(async () => {
       if (!peer || peer.connectionState !== "connected") { if (closedByUser || !peer) clearInterval(statsTimer); return; }
       try {
         const stats = await peer.getStats();
@@ -215,6 +217,7 @@ async function connectCall() {
 async function endCall(notifyPeer=true) {
   closedByUser = true;
   if (notifyPeer) signal({type:"hangup"});
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
   if (signalSocket) { signalSocket.close(); signalSocket = null; }
   if (peer) { peer.close(); peer = null; }
   if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
