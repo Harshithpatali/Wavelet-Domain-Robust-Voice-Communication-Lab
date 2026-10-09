@@ -1409,3 +1409,220 @@ with tab_report:
         """,
         unsafe_allow_html=True,
     )
+
+
+
+# ---------------------------------------------------------------- RESEARCH LAB
+with tab_research:
+    st.markdown("#### Advanced communication and security experiments")
+    st.caption(
+        "These tools are opt-in research modes. The default V3 transmission pipeline above "
+        "remains unchanged; experiments run only when you press their buttons."
+    )
+
+    with st.container(border=True):
+        st.markdown("##### Authenticated-encryption comparison")
+        st.write(
+            "The optional .wve wrapper uses Scrypt-based key derivation and AES-256-GCM. "
+            "It is separate from wavelet coefficient scrambling and authenticates the encrypted package."
+        )
+        crypto_passphrase = st.text_input(
+            "Choose a separate AES-GCM passphrase",
+            type="password",
+            key="sender_crypto_passphrase",
+            help="Do not reuse the wavelet scrambling key. Deliver this passphrase separately.",
+        )
+        if st.button(
+            "Create AES-GCM protected package",
+            key="create_aesgcm_package",
+            type="secondary",
+        ):
+            try:
+                encrypted_bytes = encrypt_transmission(transmission_wav, crypto_passphrase)
+                st.session_state["encrypted_transmission_package"] = encrypted_bytes
+                st.session_state["encrypted_transmission_signature"] = (
+                    source_name, len(transmission_wav), wavelet, level
+                )
+                st.success("Encrypted package created. Its secret passphrase is not stored in the package.")
+            except ValueError as exc:
+                st.error(str(exc))
+        encrypted_package = st.session_state.get("encrypted_transmission_package")
+        if encrypted_package:
+            st.download_button(
+                "Download AES-GCM protected .wve",
+                data=encrypted_package,
+                file_name="voice_transmission.wve",
+                mime="application/octet-stream",
+                key="download_aesgcm_package",
+                width="stretch",
+            )
+            st.caption(
+                "Receiver workflow: upload the .wve file, enter this AES-GCM passphrase, "
+                "then enter the original wavelet key. The app rejects wrong passphrases and tampering."
+            )
+        st.warning(
+            "This adds standard authenticated encryption as a comparison mode; it does not make "
+            "the entire web application or sharing service a formally audited secure communications product."
+        )
+
+    st.divider()
+    st.markdown("##### Packet-loss resilience: random loss vs. burst loss")
+    st.caption(
+        "The experiment adds AWGN to the scrambled coefficient stream, packetizes it as float32, "
+        "then compares recovery with and without one XOR parity packet per group of four."
+    )
+    lab_col1, lab_col2, lab_col3 = st.columns(3)
+    with lab_col1:
+        lab_snr = st.slider("Research channel SNR (dB)", -5.0, 40.0, 10.0, 1.0, key="lab_snr")
+    with lab_col2:
+        lab_loss = st.slider("Research packet loss", 0.0, 0.5, 0.10, 0.01, key="lab_loss")
+    with lab_col3:
+        lab_model_label = st.selectbox(
+            "Loss model", ["Random packet loss", "Gilbert–Elliott burst loss"], key="lab_channel_model"
+        )
+    lab_model = "burst" if lab_model_label.startswith("Gilbert") else "random"
+    lab_use_fec = st.checkbox(
+        "Enable XOR forward-error correction (one loss per group)", value=True, key="lab_use_fec"
+    )
+    channel_signature = (
+        source_name, len(original), float(np.mean(np.abs(original))), wavelet, level,
+        threshold_fraction, int(seed), float(lab_snr), float(lab_loss), lab_model, bool(lab_use_fec),
+        int(transmitter_key),
+    )
+    if st.button("Run packet resilience experiment", type="primary", key="run_channel_resilience"):
+        try:
+            channel_coefficients, channel_stats = simulate_coefficient_channel(
+                scrambled_packet.coeffs[0],
+                lab_snr,
+                lab_loss,
+                seed=int(seed),
+                use_fec=lab_use_fec,
+                channel_model=lab_model,
+            )
+            channel_packet = packet_with_coeffs(scrambled_packet, channel_coefficients)
+            channel_recovered_packet = descramble(
+                channel_packet,
+                make_permutation(channel_coefficients.size, int(transmitter_key)),
+            )
+            channel_recovered_audio = safe_normalize(reconstruct(channel_recovered_packet))
+            st.session_state["research_channel_result"] = {
+                "signature": channel_signature,
+                "audio": channel_recovered_audio,
+                "stats": channel_stats,
+                "snr": snr_db(original, channel_recovered_audio),
+                "mse": mse(original, channel_recovered_audio),
+                "correlation": correlation(original, channel_recovered_audio),
+                "segmental_snr": segmental_snr_db(original, channel_recovered_audio),
+                "stoi": optional_stoi(original, channel_recovered_audio, sr),
+            }
+        except (ValueError, OSError, RuntimeError) as exc:
+            st.error(f"Channel experiment failed: {exc}")
+
+    channel_result = st.session_state.get("research_channel_result")
+    if channel_result and channel_result.get("signature") == channel_signature:
+        stats = channel_result["stats"]
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Recovered SNR", f"{channel_result['snr']:.2f} dB")
+        metric_cols[1].metric("MSE", f"{channel_result['mse']:.5g}")
+        metric_cols[2].metric("Correlation", f"{channel_result['correlation']:.4f}")
+        metric_cols[3].metric("Segmental SNR", f"{channel_result['segmental_snr']:.2f} dB")
+        st.audio(audio_bytes(channel_result["audio"], sr), format="audio/wav")
+        if channel_result["stoi"] is not None:
+            st.metric("STOI speech intelligibility", f"{channel_result['stoi']:.3f}")
+        else:
+            st.caption("STOI is optional. Install pystoi to enable this speech-intelligibility metric.")
+        st.dataframe(
+            pd.DataFrame([stats]),
+            width="stretch",
+            hide_index=True,
+        )
+    else:
+        st.info("Run the packet resilience experiment to see its quality and packet-recovery metrics.")
+
+    st.divider()
+    st.markdown("##### Automated parameter sweep")
+    st.caption(
+        "The sweep is intentionally capped at 180 configurations and analyzes at most five seconds "
+        "of the current source audio to keep the Streamlit deployment responsive."
+    )
+    sweep_col1, sweep_col2 = st.columns(2)
+    with sweep_col1:
+        sweep_wavelets = st.multiselect(
+            "Wavelets", ["haar", "db2", "db4", "db8", "sym4", "coif1"],
+            default=["haar", "db4"], key="sweep_wavelets"
+        )
+        sweep_levels = st.multiselect(
+            "DWT levels", [1, 2, 3, 4, 5, 6], default=[2, 3], key="sweep_levels"
+        )
+        sweep_thresholds = st.multiselect(
+            "Threshold fractions", [0.0, 0.01, 0.02, 0.05, 0.1],
+            default=[0.0, 0.02], key="sweep_thresholds"
+        )
+    with sweep_col2:
+        sweep_snrs = st.multiselect(
+            "SNR values (dB)", [-5.0, 0.0, 10.0, 20.0, 30.0],
+            default=[0.0, 20.0], key="sweep_snrs"
+        )
+        sweep_losses = st.multiselect(
+            "Packet-loss rates", [0.0, 0.02, 0.05, 0.1, 0.2],
+            default=[0.0, 0.05], key="sweep_losses"
+        )
+        sweep_channel_label = st.selectbox(
+            "Sweep channel", ["Random packet loss", "Gilbert–Elliott burst loss"],
+            key="sweep_channel_model"
+        )
+        sweep_use_fec = st.checkbox(
+            "Use XOR FEC during sweep", value=False, key="sweep_use_fec"
+        )
+    sweep_run_count = int(np.prod([
+        len(sweep_wavelets), len(sweep_levels), len(sweep_thresholds),
+        len(sweep_snrs), len(sweep_losses)
+    ]))
+    st.caption(f"Configurations requested: {sweep_run_count} / 180 maximum")
+    sweep_model = "burst" if sweep_channel_label.startswith("Gilbert") else "random"
+    sweep_signature = (
+        tuple(sweep_wavelets), tuple(sweep_levels), tuple(sweep_thresholds),
+        tuple(sweep_snrs), tuple(sweep_losses), sweep_model, bool(sweep_use_fec),
+        source_name, len(original), int(seed), int(transmitter_key),
+    )
+    if st.button("Run parameter sweep", type="primary", key="run_parameter_sweep"):
+        try:
+            rows = run_parameter_sweep(
+                original[: min(len(original), int(sr * 5))],
+                wavelets=sweep_wavelets,
+                levels=sweep_levels,
+                thresholds=sweep_thresholds,
+                snr_values=sweep_snrs,
+                loss_rates=sweep_losses,
+                key=int(transmitter_key),
+                seed=int(seed),
+                channel_model=sweep_model,
+                use_fec=sweep_use_fec,
+                max_runs=180,
+            )
+            st.session_state["research_sweep_rows"] = rows
+            st.session_state["research_sweep_signature"] = sweep_signature
+        except (ValueError, OSError, RuntimeError) as exc:
+            st.error(f"Parameter sweep could not run: {exc}")
+
+    sweep_rows = st.session_state.get("research_sweep_rows")
+    if sweep_rows and st.session_state.get("research_sweep_signature") == sweep_signature:
+        sweep_df = pd.DataFrame(sweep_rows)
+        st.markdown("###### Best configurations by recovered SNR")
+        best_df = sweep_df.sort_values("recovered_snr_db", ascending=False).head(10)
+        st.dataframe(best_df, width="stretch", hide_index=True)
+        st.line_chart(
+            sweep_df.pivot_table(
+                index="snr_db", columns="loss_probability",
+                values="recovered_snr_db", aggfunc="mean"
+            )
+        )
+        st.download_button(
+            "Download full sweep results (CSV)",
+            sweep_df.to_csv(index=False).encode("utf-8"),
+            "wavelet_research_sweep.csv",
+            "text/csv",
+            key="download_sweep_csv",
+        )
+    else:
+        st.info("Choose a parameter grid and run the sweep. Oversized grids are rejected safely.")
